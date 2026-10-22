@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0D0D0D">
+  <title>cached</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app">
+    <section id="auth-welcome" class="auth-welcome">
+      <header class="auth-welcome-heading">
+        <p class="auth-welcome-message">Welcome to the...</p>
+        <h1 class="auth-welcome-brand">cached</h1>
+      </header>
+      <div class="auth-welcome-actions">
+        <button id="welcome-login" type="button">Log In</button>
+        <button id="welcome-signup" type="button">Sign Up</button>
+      </div>
+      <p id="welcome-status" class="status" role="status"></p>
+    </section>
+
+    <section id="auth-panel" class="panel auth-panel" hidden>
+      <header class="auth-header">
+        <button id="auth-back" class="secondary-button" type="button">Back</button>
+        <h2 id="auth-title">Log In</h2>
+      </header>
+      <form id="auth-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required minlength="3" maxlength="24">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128">
+        <button id="auth-submit" type="submit">Log In</button>
+      </form>
+      <button id="recovery-start" class="link-button" type="button" hidden>Forgot password?</button>
+      <form id="signup-name-form" hidden>
+        <label for="signup-username">Username</label>
+        <input id="signup-username" name="username" autocomplete="username" required
+          minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}">
+        <span class="muted">This will be your username and display name.</span>
+        <button type="submit">Continue</button>
+      </form>
+      <form id="signup-password-form" hidden>
+        <label for="signup-password">Your new password</label>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password"
+          required minlength="8" maxlength="128">
+        <span class="muted">Use 8–128 characters.</span>
+        <label for="signup-password-confirmation">Confirm your password</label>
+        <input id="signup-password-confirmation" name="passwordConfirmation" type="password"
+          autocomplete="new-password" required minlength="8" maxlength="128">
+        <button id="signup-password-submit" type="submit">Continue</button>
+      </form>
+      <form id="signup-phrase-form" hidden>
+        <p class="muted recovery-warning">
+          Write these 24 words down in order and keep them private. They are the only way to recover your account.
+        </p>
+        <ol id="recovery-words" class="recovery-words" aria-label="Your recovery phrase"></ol>
+        <button id="signup-phrase-continue" type="button">I saved my recovery phrase</button>
+      </form>
+      <form id="signup-confirm-form" hidden>
+        <p id="recovery-challenge-prompt" class="muted">
+          Confirm the requested words from your recovery phrase.
+        </p>
+        <div id="recovery-challenge-inputs" class="recovery-challenge-inputs"></div>
+        <button id="signup-confirm-submit" type="submit">Create Account</button>
+      </form>
+      <form id="recovery-form" hidden>
+        <label for="recovery-username">Username</label>
+        <input id="recovery-username" autocomplete="username" required minlength="3" maxlength="24">
+        <label for="recovery-phrase-input">24-word recovery phrase</label>
+        <textarea id="recovery-phrase-input" rows="4" maxlength="512" autocomplete="off"
+          autocapitalize="none" spellcheck="false" required></textarea>
+        <label for="recovery-password">New password</label>
+        <input id="recovery-password" type="password" autocomplete="new-password"
+          required minlength="8" maxlength="128">
+        <label for="recovery-password-confirmation">Confirm new password</label>
+        <input id="recovery-password-confirmation" type="password" autocomplete="new-password"
+          required minlength="8" maxlength="128">
+        <button id="recovery-submit" type="submit">Recover Account</button>
+      </form>
+      <p id="auth-message" class="status" role="status"></p>
+    </section>
+
+    <section id="chat-panel" class="workspace" hidden>
+      <header class="workspace-topbar">
+        <h1 class="workspace-brand">cached</h1>
+        <button id="settings-toggle" class="expandable-action settings-toggle" type="button"
+          aria-label="Settings" aria-pressed="false">
+          <span class="action-button-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings preview-icon"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
+          <span class="action-button-label">Settings</span>
+        </button>
+      </header>
+      <aside id="sidebar" class="sidebar">
+        <header class="sidebar-header">
+          <h2>Chats</h2>
+        </header>
+        <p id="sidebar-status" class="status" role="status"></p>
+        <div id="dialog-browser" class="dialog-browser">
+          <form id="search-form" class="search-form">
+            <label class="sr-only" for="search-query">Find a user by ID, username, or name</label>
+            <input id="search-query" autocomplete="off" placeholder="Find a user">
+          </form>
+          <section id="dialogs-view" class="sidebar-view">
+            <ul id="dialog-list" class="dialog-list" aria-label="Chats"></ul>
+          </section>
+          <section id="search-view" class="sidebar-view" hidden>
+            <ul id="search-results" class="dialog-list"></ul>
+          </section>
+        </div>
+      </aside>
+
+      <section id="conversation-panel" class="conversation-panel">
+        <div id="welcome-view" class="welcome-view">
+          <p>Select a chat or find someone to message.</p>
+        </div>
+        <section id="conversation-view" class="conversation-view" hidden>
+          <header class="conversation-header">
+            <button id="back-button" type="button" class="secondary-button back-button">Back</button>
+            <div>
+              <strong id="conversation-name"></strong>
+              <span id="conversation-username" class="muted"></span>
+            </div>
+            <div class="chat-actions">
+              <button id="conversation-delete" class="conversation-delete-placeholder" type="button"
+                aria-label="More chat options" aria-expanded="false" aria-controls="chat-actions-menu"></button>
+              <div id="chat-actions-menu" class="chat-actions-menu" aria-hidden="true">
+                <button id="open-delete-confirmation" class="chat-actions-menu-item" type="button" tabindex="-1">
+                  <span class="chat-actions-menu-icon" aria-hidden="true"></span>
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          </header>
+          <p id="conversation-status" class="status" role="status"></p>
+          <ol id="messages" class="messages" aria-live="polite"></ol>
+          <form id="composer" class="composer">
+            <label class="sr-only" for="message-input">Message</label>
+            <input id="message-input" placeholder="Message" autocomplete="off" maxlength="4000">
+            <button id="send-button" type="submit">Send</button>
+          </form>
+        </section>
+      </section>
+    </section>
+
+    <div id="settings-overlay" class="settings-overlay" hidden>
+      <section id="settings-view" class="settings-view" role="dialog"
+        aria-modal="true" aria-labelledby="settings-title">
+        <header class="settings-header">
+          <h1 id="settings-title">Settings</h1>
+          <div class="settings-header-actions">
+            <button id="settings-back" type="button" class="secondary-button">Back</button>
+          </div>
+        </header>
+        <form id="settings-form" class="settings-form">
+          <div class="settings-identity-grid">
+            <div class="settings-field">
+              <label for="display-name">Display name</label>
+              <input id="display-name" maxlength="100" required>
+            </div>
+            <div class="settings-field">
+              <label for="profile-username">Username</label>
+              <input id="profile-username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" required>
+            </div>
+          </div>
+          <span class="muted">3–24 characters: letters, numbers, and _</span>
+          <fieldset class="color-fieldset">
+            <legend>Your message color</legend>
+            <div id="color-palette" class="color-palette" aria-label="Color palette"></div>
+            <label for="custom-color">Custom color</label>
+            <input id="custom-color" type="color" value="#2B2B2B">
+            <label for="color-hex">HEX</label>
+            <input id="color-hex" pattern="#[0-9A-Fa-f]{6}" maxlength="7" value="#2B2B2B" required>
+            <div class="preview-wrap">
+              <span class="muted">Preview</span>
+              <div id="message-preview" class="message-preview">
+                <span>Your message</span>
+              </div>
+            </div>
+          </fieldset>
+          <div class="settings-form-footer">
+            <button id="logout" class="logout-button" type="button">Log Out</button>
+            <p id="settings-status" class="status" role="status"></p>
+            <button id="settings-save" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden>
+    <span class="save-toast-icon" aria-hidden="true"></span>
+    <span class="save-toast-message">Settings saved.</span>
+    <button id="save-toast-close" class="save-toast-close" type="button"
+      aria-label="Dismiss notification">×</button>
+    <span class="save-toast-timer" aria-hidden="true"></span>
+  </div>
+
+  <div id="logout-confirmation" class="confirmation-overlay" hidden>
+    <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="logout-title">
+      <h2 id="logout-title">Log out?</h2>
+      <p>Are you sure you want to log out?</p>
+      <p id="logout-status" class="status" role="alert"></p>
+      <div class="confirmation-actions">
+        <button id="logout-cancel" class="confirmation-no" type="button">Cancel</button>
+        <button id="logout-confirm" class="confirmation-yes" type="button">Log Out</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="delete-confirmation" class="confirmation-overlay" hidden>
+    <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+      <h2 id="delete-title">Delete this chat?</h2>
+      <p>Choose who this chat will be deleted for.</p>
+      <fieldset class="delete-scope-options">
+        <legend>Delete chat</legend>
+        <label>
+          <input type="radio" name="delete-scope" value="self" checked>
+          Delete only for me
+        </label>
+        <label>
+          <input type="radio" name="delete-scope" value="everyone">
+          Delete for both participants
+        </label>
+      </fieldset>
+      <p id="delete-status" class="status" role="alert"></p>
+      <div class="confirmation-actions">
+        <button id="delete-confirm" class="confirmation-delete" type="button">Delete</button>
+        <button id="delete-cancel" class="confirmation-no" type="button">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/api.js"></script>
+  <script src="/state.js"></script>
+  <script src="/components.js"></script>
+  <script src="/chat.js"></script>
+</body>
+</html>
