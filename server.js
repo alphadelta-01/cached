@@ -474,31 +474,26 @@ app.get('/api/conversations', requireUser, async (request, response) => {
       other.username AS other_username,
       other.display_name AS other_display_name,
       other.message_color AS other_message_color,
-      (
-        SELECT text FROM private_messages
-        WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1
-      ) AS last_text,
-      (
-        SELECT created_at FROM private_messages
-        WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1
-      ) AS last_created_at,
-      (
-        SELECT id FROM private_messages
-        WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1
-      ) AS last_message_id,
-      (
-        SELECT sender_id FROM private_messages
-        WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1
-      ) AS last_sender_id
+      last_message.text AS last_text,
+      last_message.created_at AS last_created_at,
+      last_message.id AS last_message_id,
+      last_message.sender_id AS last_sender_id
     FROM conversations c
     LEFT JOIN hidden_conversations hidden
       ON hidden.conversation_id = c.id AND hidden.user_id = $1
     JOIN users other ON other.id = CASE
       WHEN c.user_low = $1 THEN c.user_high ELSE c.user_low
     END
+    LEFT JOIN LATERAL (
+      SELECT text, created_at, id, sender_id
+      FROM private_messages
+      WHERE conversation_id = c.id
+      ORDER BY id DESC
+      LIMIT 1
+    ) last_message ON TRUE
     WHERE (c.user_low = $1 OR c.user_high = $1) AND hidden.user_id IS NULL
-    ORDER BY COALESCE(last_created_at, c.created_at) DESC,
-      COALESCE(last_message_id, c.id) DESC
+    ORDER BY COALESCE(last_message.created_at, c.created_at) DESC,
+      COALESCE(last_message.id, c.id) DESC
   `, [request.user.id]);
   const rows = rowsResult.rows;
 
