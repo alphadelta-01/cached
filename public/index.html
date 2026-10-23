@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="cached">
   <title>cached</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon.svg?v=2" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -208,10 +208,40 @@
           </div>
           <form id="composer" class="composer">
             <div class="message-composer-row">
-              <div id="message-input" class="message-editor" role="textbox" aria-label="Message"
-                aria-multiline="true" contenteditable="true" data-placeholder="Message"></div>
-              <button id="send-button" type="submit">Send</button>
+              <div class="message-input-area">
+                <div id="message-input" class="message-editor" role="textbox" aria-label="Message"
+                  aria-multiline="true" contenteditable="true" data-placeholder="Message"></div>
+                <div class="message-composer-actions">
+                  <button id="attachment-toggle" class="composer-icon-button" type="button"
+                    aria-label="Attach image, video, or GIF" aria-haspopup="menu"
+                    aria-expanded="false">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
+                  </button>
+                  <button id="send-button" class="composer-icon-button send-icon-button"
+                    type="submit" aria-label="Send message">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z"/><path d="M6 12h16"/></svg>
+                  </button>
+                </div>
+                <div id="attachment-menu" class="attachment-menu" role="menu" hidden>
+                  <button id="choose-media" class="attachment-menu-item" type="button"
+                    role="menuitem">Image or video…</button>
+                  <button id="open-tenor" class="attachment-menu-item" type="button"
+                    role="menuitem">GIF from Tenor…</button>
+                  <div id="tenor-search-panel" class="tenor-search-panel" hidden>
+                    <div class="tenor-search-form">
+                      <input id="tenor-search-input" type="search" maxlength="80"
+                        placeholder="Search Tenor GIFs" aria-label="Search Tenor GIFs">
+                      <button id="tenor-search-button" type="button">Search</button>
+                    </div>
+                    <p class="tenor-attribution">GIFs provided by Tenor</p>
+                    <div id="tenor-results" class="tenor-results" aria-live="polite"></div>
+                  </div>
+                </div>
+                <input id="attachment-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,video/mp4,video/webm,video/quicktime,video/ogg,.png,.jpg,.jpeg,.gif,.webp,.avif,.bmp,.mp4,.m4v,.mov,.webm,.ogv,.ogg" multiple hidden>
+              </div>
             </div>
+            <div id="attachment-preview" class="attachment-preview" hidden></div>
+            <p id="attachment-status" class="status" role="status" aria-live="polite"></p>
           </form>
         </section>
       </section>

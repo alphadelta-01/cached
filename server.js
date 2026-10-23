@@ -4,6 +4,7 @@ const path = require('path');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
 const { promisify } = require('util');
+const multer = require('multer');
 const webPush = require('web-push');
 const { pool, initializeDatabase } = require('./database');
 
@@ -13,6 +14,13 @@ const PENDING_SIGNUP_DURATION = 15 * 60 * 1000;
 const RECOVERY_WORD_COUNT = 24;
 const COOKIE_NAME = 'chat_session';
 const DEFAULT_MESSAGE_COLOR = '#2B2B2B';
+const TENOR_API_KEY = process.env.TENOR_API_KEY;
+const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024;
+const MAX_ATTACHMENTS_PER_MESSAGE = 5;
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_ATTACHMENT_SIZE, files: 1 }
+});
 const PUSH_SERVICE_HOSTS = [
   'fcm.googleapis.com',
   'push.services.mozilla.com',
@@ -216,6 +224,7 @@ function formatMessage(message) {
   return {
     id: message.id,
     text: message.text,
+    attachments: message.attachments || [],
     senderId: message.sender_id,
     senderDisplayName: message.display_name,
     messageColor: message.message_color,
@@ -232,6 +241,51 @@ function formatMessage(message) {
   };
 }
 
+function getUploadedMediaType(file) {
+  const extension = path.extname(file.originalname).toLowerCase();
+  const header = file.buffer.subarray(0, 16);
+  const signatures = {
+    '.png': header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+    '.jpg': header.subarray(0, 3).equals(Buffer.from([255, 216, 255])),
+    '.jpeg': header.subarray(0, 3).equals(Buffer.from([255, 216, 255])),
+    '.gif': ['GIF87a', 'GIF89a'].includes(header.subarray(0, 6).toString()),
+    '.webp': header.subarray(0, 4).toString() === 'RIFF'
+      && header.subarray(8, 12).toString() === 'WEBP',
+    '.avif': header.subarray(4, 8).toString() === 'ftyp'
+      && ['avif', 'avis'].includes(header.subarray(8, 12).toString()),
+    '.bmp': header.subarray(0, 2).toString() === 'BM',
+    '.mp4': header.subarray(4, 8).toString() === 'ftyp',
+    '.m4v': header.subarray(4, 8).toString() === 'ftyp',
+    '.mov': header.subarray(4, 8).toString() === 'ftyp'
+      && header.subarray(8, 10).toString() === 'qt',
+    '.webm': header.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])),
+    '.ogv': header.subarray(0, 4).toString() === 'OggS',
+    '.ogg': header.subarray(0, 4).toString() === 'OggS'
+  };
+  if (!signatures[extension]) return null;
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp'].includes(extension)) {
+    return extension === '.jpg' || extension === '.jpeg'
+      ? 'image/jpeg'
+      : `image/${extension.slice(1)}`;
+  }
+  if (extension === '.webm') return 'video/webm';
+  if (extension === '.ogv' || extension === '.ogg') return 'video/ogg';
+  if (extension === '.mov') return 'video/quicktime';
+  return 'video/mp4';
+}
+
+function isTrustedTenorGif(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.hostname === 'media.tenor.com'
+      && url.pathname.toLowerCase().endsWith('.gif')
+      && url.href.length <= 2048;
+  } catch {
+    return false;
+  }
+}
+
 const app = express();
 app.use(express.json({ limit: '64kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -246,6 +300,172 @@ app.get('/api/push/config', requireUser, (request, response) => {
     return;
   }
   response.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.get('/api/tenor/search', requireUser, async (request, response) => {
+  if (!TENOR_API_KEY) {
+    response.status(503).json({ error: 'Tenor GIF search is not configured on the server.' });
+    return;
+  }
+  const query = typeof request.query.q === 'string' ? request.query.q.trim() : '';
+  if (!query || query.length > 80) {
+    response.status(400).json({ error: 'GIF search must be 1–80 characters.' });
+    return;
+  }
+
+  const params = new URLSearchParams({
+    key: TENOR_API_KEY,
+    client_key: 'cached',
+    q: query,
+    limit: '20',
+    media_filter: 'gif,tinygif'
+  });
+  let result;
+  try {
+    const tenorResponse = await fetch(
+      `https://tenor.googleapis.com/v2/search?${params}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!tenorResponse.ok) {
+      console.error(`Tenor GIF search failed with status ${tenorResponse.status}.`);
+      response.status(502).json({ error: 'Tenor GIF search is temporarily unavailable.' });
+      return;
+    }
+    result = await tenorResponse.json();
+  } catch (error) {
+    console.error('Could not search Tenor GIFs:', error);
+    response.status(502).json({ error: 'Could not connect to Tenor. Try again shortly.' });
+    return;
+  }
+
+  const gifs = (Array.isArray(result.results) ? result.results : [])
+    .map((item) => {
+      const url = item.media_formats?.gif?.url;
+      const preview = item.media_formats?.tinygif?.url || url;
+      if (!isTrustedTenorGif(url) || !isTrustedTenorGif(preview)) return null;
+      return {
+        id: String(item.id),
+        title: typeof item.content_description === 'string'
+          ? item.content_description.slice(0, 120)
+          : 'GIF',
+        url,
+        preview
+      };
+    })
+    .filter(Boolean);
+  response.json({ gifs });
+});
+
+app.post(
+  '/api/conversations/:id/attachments',
+  requireUser,
+  attachmentUpload.single('file'),
+  async (request, response) => {
+    const conversationId = parseConversationId(request.params.id);
+    if (!conversationId || !await isConversationVisibleToUser(conversationId, request.user.id)) {
+      response.status(404).json({ error: 'Chat not found.' });
+      return;
+    }
+    const file = request.file;
+    const mimeType = file && getUploadedMediaType(file);
+    if (!file || !mimeType) {
+      response.status(400).json({
+        error: 'Choose a supported image or video file with a matching file extension.'
+      });
+      return;
+    }
+
+    await pool.query(`
+      DELETE FROM message_attachments
+      WHERE message_id IS NULL AND created_at < CURRENT_TIMESTAMP - INTERVAL '1 day'
+    `);
+    const id = crypto.randomUUID();
+    const fileName = path.basename(file.originalname).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 180);
+    const inserted = await pool.query(`
+      INSERT INTO message_attachments (
+        id, conversation_id, uploader_id, file_name, mime_type, byte_size, data
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, file_name, mime_type, byte_size
+    `, [id, conversationId, request.user.id, fileName || 'attachment', mimeType, file.size, file.buffer]);
+    const attachment = inserted.rows[0];
+    response.status(201).json({
+      attachment: {
+        id: attachment.id,
+        name: attachment.file_name,
+        mimeType: attachment.mime_type,
+        size: attachment.byte_size,
+        url: `/api/attachments/${attachment.id}`
+      }
+    });
+  }
+);
+
+app.delete(
+  '/api/conversations/:id/attachments/:attachmentId',
+  requireUser,
+  async (request, response) => {
+    const conversationId = parseConversationId(request.params.id);
+    const attachmentId = request.params.attachmentId;
+    if (
+      !conversationId
+      || !/^[0-9a-f-]{36}$/i.test(attachmentId)
+      || !await isConversationVisibleToUser(conversationId, request.user.id)
+    ) {
+      response.status(404).json({ error: 'Attachment not found.' });
+      return;
+    }
+    const result = await pool.query(`
+      DELETE FROM message_attachments
+      WHERE id = $1 AND conversation_id = $2
+        AND uploader_id = $3 AND message_id IS NULL
+    `, [attachmentId, conversationId, request.user.id]);
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: 'Attachment not found.' });
+      return;
+    }
+    response.json({ success: true });
+  }
+);
+
+app.get('/api/attachments/:id', requireUser, async (request, response) => {
+  const attachmentId = request.params.id;
+  if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) {
+    response.status(404).json({ error: 'Attachment not found.' });
+    return;
+  }
+  const result = await pool.query(`
+    SELECT attachment.file_name, attachment.mime_type, attachment.data
+    FROM message_attachments attachment
+    JOIN conversations conversation
+      ON conversation.id = attachment.conversation_id
+    LEFT JOIN hidden_conversations hidden_conversation
+      ON hidden_conversation.conversation_id = conversation.id
+      AND hidden_conversation.user_id = $2
+    LEFT JOIN hidden_messages hidden_message
+      ON hidden_message.message_id = attachment.message_id
+      AND hidden_message.user_id = $2
+    WHERE attachment.id = $1
+      AND (conversation.user_low = $2 OR conversation.user_high = $2)
+      AND hidden_conversation.user_id IS NULL
+      AND (
+        (attachment.message_id IS NULL AND attachment.uploader_id = $2)
+        OR (attachment.message_id IS NOT NULL AND hidden_message.message_id IS NULL)
+      )
+  `, [attachmentId, request.user.id]);
+  const attachment = result.rows[0];
+  if (!attachment) {
+    response.status(404).json({ error: 'Attachment not found.' });
+    return;
+  }
+  response.set({
+    'Content-Type': attachment.mime_type,
+    'Content-Length': String(attachment.data.length),
+    'Content-Disposition': `inline; filename="${attachment.file_name.replace(/["\\]/g, '_')}"`,
+    'Cache-Control': 'private, max-age=3600',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  response.send(attachment.data);
 });
 
 app.put('/api/push/subscriptions', requireUser, async (request, response) => {
@@ -736,6 +956,7 @@ app.get('/api/conversations', requireUser, async (request, response) => {
       other.bio AS other_bio,
       CASE WHEN other.show_last_seen THEN other.last_seen_at ELSE NULL END AS other_last_seen_at,
       last_message.text AS last_text,
+      last_message.attachments AS last_attachments,
       last_message.created_at AS last_created_at,
       last_message.id AS last_message_id,
       last_message.sender_id AS last_sender_id,
@@ -748,7 +969,18 @@ app.get('/api/conversations', requireUser, async (request, response) => {
     END
     LEFT JOIN LATERAL (
       SELECT private_messages.text, private_messages.created_at,
-        private_messages.id, private_messages.sender_id
+        private_messages.id, private_messages.sender_id,
+        (
+          SELECT COALESCE(json_agg(json_build_object(
+            'id', attachment.id,
+            'name', attachment.file_name,
+            'mimeType', attachment.mime_type,
+            'size', attachment.byte_size,
+            'url', COALESCE(attachment.external_url, '/api/attachments/' || attachment.id)
+          ) ORDER BY attachment.created_at), '[]'::json)
+          FROM message_attachments attachment
+          WHERE attachment.message_id = private_messages.id
+        ) AS attachments
       FROM private_messages
       LEFT JOIN hidden_messages hidden
         ON hidden.message_id = private_messages.id AND hidden.user_id = $1
@@ -795,6 +1027,7 @@ app.get('/api/conversations', requireUser, async (request, response) => {
       unreadCount: row.unread_count,
       lastMessage: row.last_text === null ? null : {
         text: row.last_text,
+        attachments: row.last_attachments || [],
         createdAt: row.last_created_at,
         senderId: row.last_sender_id
       }
@@ -921,6 +1154,7 @@ app.get('/api/conversations/:id/messages', requireUser, async (request, response
       reply.id AS reply_to_id, reply.text AS reply_to_text,
       reply.sender_id AS reply_to_sender_id,
       reply_user.display_name AS reply_to_display_name,
+      media.attachments,
       message.forwarded_from_name
     FROM (
       SELECT * FROM private_messages
@@ -935,6 +1169,17 @@ app.get('/api/conversations/:id/messages', requireUser, async (request, response
     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
     LEFT JOIN hidden_messages hidden
       ON hidden.message_id = message.id AND hidden.user_id = $2
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(json_agg(json_build_object(
+        'id', attachment.id,
+        'name', attachment.file_name,
+        'mimeType', attachment.mime_type,
+        'size', attachment.byte_size,
+        'url', COALESCE(attachment.external_url, '/api/attachments/' || attachment.id)
+      ) ORDER BY attachment.created_at), '[]'::json) AS attachments
+      FROM message_attachments attachment
+      WHERE attachment.message_id = message.id
+    ) media ON TRUE
     WHERE hidden.message_id IS NULL
     ORDER BY message.id
   `, [conversationId, request.user.id]);
@@ -961,15 +1206,45 @@ app.post('/api/conversations/:id/messages', requireUser, async (request, respons
     return;
   }
 
-  const text = typeof request.body.text === 'string' ? request.body.text.trim() : '';
+  const body = request.body && typeof request.body === 'object' ? request.body : {};
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (
+    (body.attachmentIds !== undefined && !Array.isArray(body.attachmentIds))
+    || (body.tenorGifs !== undefined && !Array.isArray(body.tenorGifs))
+  ) {
+    response.status(400).json({ error: 'The attachment list is invalid.' });
+    return;
+  }
   const visibleText = text.startsWith('\u2063')
     ? text.slice(1)
       .replace(/<br>/gi, '\n')
       .replace(/<\/?(?:strong|em|u|s)>/gi, '')
       .replace(/&(?:amp|lt|gt);/g, 'x')
     : text.replace(/\*\*|__|~~|\*/g, '');
-  if (!visibleText.trim() || text.length > 40000 || visibleText.length > 4000) {
+  const attachmentIds = Array.isArray(body.attachmentIds) ? body.attachmentIds : [];
+  const tenorGifs = Array.isArray(body.tenorGifs) ? body.tenorGifs : [];
+  if (
+    attachmentIds.length + tenorGifs.length > MAX_ATTACHMENTS_PER_MESSAGE
+    || attachmentIds.some((id) => typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id))
+    || new Set(attachmentIds).size !== attachmentIds.length
+  ) {
+    response.status(400).json({ error: 'Choose up to five valid attachments per message.' });
+    return;
+  }
+  if (
+    (!visibleText.trim() && attachmentIds.length + tenorGifs.length === 0)
+    || text.length > 40000
+    || visibleText.length > 4000
+  ) {
     response.status(400).json({ error: 'Message must be 1–4,000 visible characters.' });
+    return;
+  }
+  if (tenorGifs.some((gif) => !gif || !isTrustedTenorGif(gif.url))) {
+    response.status(400).json({ error: 'One of the selected Tenor GIFs is invalid.' });
+    return;
+  }
+  if (tenorGifs.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    response.status(400).json({ error: 'Choose up to five attachments per message.' });
     return;
   }
 
@@ -991,24 +1266,78 @@ app.post('/api/conversations/:id/messages', requireUser, async (request, respons
     }
   }
 
-  const insertResult = await pool.query(`
-    INSERT INTO private_messages (conversation_id, sender_id, text, reply_to_id)
-    VALUES ($1, $2, $3, $4)
-    RETURNING id
-  `, [conversationId, request.user.id, text, replyToId]);
+  const client = await pool.connect();
+  let messageId;
+  try {
+    await client.query('BEGIN');
+    if (attachmentIds.length > 0) {
+      const staged = await client.query(`
+        SELECT id FROM message_attachments
+        WHERE id = ANY($1::text[]) AND conversation_id = $2
+          AND uploader_id = $3 AND message_id IS NULL
+        FOR UPDATE
+      `, [attachmentIds, conversationId, request.user.id]);
+      if (staged.rowCount !== attachmentIds.length) {
+        throw new Error('One or more uploaded attachments are no longer available.');
+      }
+    }
+    const insertResult = await client.query(`
+      INSERT INTO private_messages (conversation_id, sender_id, text, reply_to_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id
+    `, [conversationId, request.user.id, visibleText.trim() ? text : '', replyToId]);
+    messageId = insertResult.rows[0].id;
+    if (attachmentIds.length > 0) {
+      await client.query(`
+        UPDATE message_attachments SET message_id = $1
+        WHERE id = ANY($2::text[])
+      `, [messageId, attachmentIds]);
+    }
+    for (const gif of tenorGifs) {
+      await client.query(`
+        INSERT INTO message_attachments (
+          id, conversation_id, message_id, uploader_id, file_name,
+          mime_type, byte_size, external_url
+        )
+        VALUES ($1, $2, $3, $4, 'Tenor GIF', 'image/gif', 0, $5)
+      `, [crypto.randomUUID(), conversationId, messageId, request.user.id, gif.url]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.message === 'One or more uploaded attachments are no longer available.') {
+      response.status(400).json({ error: error.message });
+      return;
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
   const messageResult = await pool.query(`
     SELECT private_messages.id, private_messages.text, private_messages.sender_id,
       private_messages.created_at, users.display_name, users.message_color,
       reply.id AS reply_to_id, reply.text AS reply_to_text,
       reply.sender_id AS reply_to_sender_id,
       reply_user.display_name AS reply_to_display_name,
+      media.attachments,
       private_messages.forwarded_from_name
     FROM private_messages
     JOIN users ON users.id = private_messages.sender_id
     LEFT JOIN private_messages reply ON reply.id = private_messages.reply_to_id
     LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(json_agg(json_build_object(
+        'id', attachment.id,
+        'name', attachment.file_name,
+        'mimeType', attachment.mime_type,
+        'size', attachment.byte_size,
+        'url', COALESCE(attachment.external_url, '/api/attachments/' || attachment.id)
+      ) ORDER BY attachment.created_at), '[]'::json) AS attachments
+      FROM message_attachments attachment
+      WHERE attachment.message_id = private_messages.id
+    ) media ON TRUE
     WHERE private_messages.id = $1
-  `, [insertResult.rows[0].id]);
+  `, [messageId]);
   const message = messageResult.rows[0];
   const formatted = formatMessage(message);
   const conversationResult = await pool.query(`
@@ -1036,7 +1365,7 @@ app.post('/api/conversations/:id/messages', requireUser, async (request, respons
   const preview = Array.from(formatted.text);
   const notificationBody = preview.length > 160
     ? `${preview.slice(0, 157).join('')}…`
-    : formatted.text;
+    : formatted.text || 'Sent an attachment';
   sendPushNotifications(recipientId, {
     title: `${formatted.senderDisplayName} sent you a message`,
     body: notificationBody,
@@ -1136,32 +1465,80 @@ app.post(
       return;
     }
 
-    const insertResult = await pool.query(`
-      INSERT INTO private_messages (
-        conversation_id, sender_id, text, forwarded_from_id, forwarded_from_name
-      )
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id
-    `, [
-      targetConversationId,
-      request.user.id,
-      sourceMessage.text,
-      sourceMessageId,
-      sourceMessage.display_name
-    ]);
+    const sourceAttachments = await pool.query(`
+      SELECT file_name, mime_type, byte_size, data, external_url
+      FROM message_attachments
+      WHERE message_id = $1
+      ORDER BY created_at, id
+    `, [sourceMessageId]);
+    const client = await pool.connect();
+    let forwardedMessageId;
+    try {
+      await client.query('BEGIN');
+      const insertResult = await client.query(`
+        INSERT INTO private_messages (
+          conversation_id, sender_id, text, forwarded_from_id, forwarded_from_name
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `, [
+        targetConversationId,
+        request.user.id,
+        sourceMessage.text,
+        sourceMessageId,
+        sourceMessage.display_name
+      ]);
+      forwardedMessageId = insertResult.rows[0].id;
+      for (const attachment of sourceAttachments.rows) {
+        await client.query(`
+          INSERT INTO message_attachments (
+            id, conversation_id, message_id, uploader_id, file_name,
+            mime_type, byte_size, data, external_url
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [
+          crypto.randomUUID(),
+          targetConversationId,
+          forwardedMessageId,
+          request.user.id,
+          attachment.file_name,
+          attachment.mime_type,
+          attachment.byte_size,
+          attachment.data,
+          attachment.external_url
+        ]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
     const forwardedResult = await pool.query(`
       SELECT private_messages.id, private_messages.text, private_messages.sender_id,
         private_messages.created_at, users.display_name, users.message_color,
         reply.id AS reply_to_id, reply.text AS reply_to_text,
         reply.sender_id AS reply_to_sender_id,
         reply_user.display_name AS reply_to_display_name,
-        private_messages.forwarded_from_name
+        private_messages.forwarded_from_name,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'id', attachment.id,
+            'name', attachment.file_name,
+            'mimeType', attachment.mime_type,
+            'size', attachment.byte_size,
+            'url', COALESCE(attachment.external_url, '/api/attachments/' || attachment.id)
+          ) ORDER BY attachment.created_at, attachment.id)
+          FROM message_attachments attachment
+          WHERE attachment.message_id = private_messages.id
+        ), '[]'::json) AS attachments
       FROM private_messages
       JOIN users ON users.id = private_messages.sender_id
       LEFT JOIN private_messages reply ON reply.id = private_messages.reply_to_id
       LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
       WHERE private_messages.id = $1
-    `, [insertResult.rows[0].id]);
+    `, [forwardedMessageId]);
     const formatted = formatMessage(forwardedResult.rows[0]);
     const targetResult = await pool.query(
       'SELECT user_low, user_high FROM conversations WHERE id = $1',
@@ -1188,6 +1565,14 @@ app.post(
 );
 
 app.use((error, request, response, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      response.status(413).json({ error: 'Files must be 25 MB or smaller.' });
+      return;
+    }
+    response.status(400).json({ error: 'Choose one supported image or video file.' });
+    return;
+  }
   console.error(error);
   if (response.headersSent) {
     next(error);

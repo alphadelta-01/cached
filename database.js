@@ -100,6 +100,21 @@ async function initializeDatabase() {
     );
     CREATE INDEX IF NOT EXISTS private_messages_conversation_id_id
       ON private_messages (conversation_id, id);
+    CREATE TABLE IF NOT EXISTS message_attachments (
+      id TEXT PRIMARY KEY,
+      conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      message_id INTEGER REFERENCES private_messages(id) ON DELETE CASCADE,
+      uploader_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      data BYTEA,
+      external_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CHECK ((data IS NOT NULL) <> (external_url IS NOT NULL))
+    );
+    CREATE INDEX IF NOT EXISTS message_attachments_message_id
+      ON message_attachments (message_id);
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       endpoint TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -49,3 +49,16 @@ development). Sign in on each device and enable Message notifications in
 Settings. On iPhone, add the site to the Home Screen and open the installed app
 before enabling notifications. Notification previews contain the sender name
 and message text.
+
+## Message attachments and GIF search
+
+Uploaded images and videos are stored in PostgreSQL in the
+`message_attachments` table, so the deployment does not depend on persistent
+local disk storage. Configure `TENOR_API_KEY` as a server-side environment
+variable to enable GIF search. The key is never sent to the browser.
+
+On Suga, configure `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and
+`VAPID_SUBJECT` as application environment variables to enable push
+notifications, and configure `TENOR_API_KEY` to enable Tenor search. Keep all
+keys in the platform's secret/environment-variable settings; do not commit
+them or send them through chat.

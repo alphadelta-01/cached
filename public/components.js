@@ -126,7 +126,15 @@ function updateConversationItem(item, conversation, currentUserId) {
   preview.replaceChildren();
   if (lastMessage) {
     if (isOwnLastMessage) preview.append(document.createTextNode('You: '));
-    appendFormattedText(preview, lastMessage.text);
+    if (lastMessage.text) {
+      appendFormattedText(preview, lastMessage.text);
+    } else if (lastMessage.attachments?.some((attachment) => attachment.mimeType.startsWith('video/'))) {
+      preview.append(document.createTextNode('Video'));
+    } else if (lastMessage.attachments?.some((attachment) => attachment.mimeType === 'image/gif')) {
+      preview.append(document.createTextNode('GIF'));
+    } else if (lastMessage.attachments?.length) {
+      preview.append(document.createTextNode('Image'));
+    }
   } else {
     preview.textContent = 'Send the first message';
   }
@@ -304,7 +312,33 @@ function createMessageItem(message, currentUserId) {
     });
     item.append(sender);
   }
-  item.append(text, time);
+  if (message.text) item.append(text);
+  for (const attachment of message.attachments || []) {
+    const media = document.createElement('div');
+    media.className = 'message-attachment';
+    if (attachment.mimeType.startsWith('image/')) {
+      const link = document.createElement('a');
+      link.href = attachment.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const image = document.createElement('img');
+      image.src = attachment.url;
+      image.alt = attachment.name || (attachment.mimeType === 'image/gif' ? 'GIF' : 'Image');
+      image.loading = 'lazy';
+      link.append(image);
+      media.append(link);
+    } else if (attachment.mimeType.startsWith('video/')) {
+      const video = document.createElement('video');
+      video.src = attachment.url;
+      video.controls = true;
+      video.preload = 'metadata';
+      video.playsInline = true;
+      video.setAttribute('aria-label', attachment.name || 'Video attachment');
+      media.append(video);
+    }
+    if (media.childNodes.length) item.append(media);
+  }
+  item.append(time);
   if (own) item.append(status);
   return item;
 }

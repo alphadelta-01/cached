@@ -4,7 +4,9 @@ async function apiRequest(path, options = {}) {
     response = await fetch(path, {
       ...options,
       headers: {
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.body && !(options.body instanceof FormData)
+          ? { 'Content-Type': 'application/json' }
+          : {}),
         ...options.headers
       }
     });
@@ -77,6 +79,19 @@ const api = {
     { method: 'POST' }
   ),
   getPushConfig: () => apiRequest('/api/push/config'),
+  searchTenorGifs: (query) => apiRequest(`/api/tenor/search?q=${encodeURIComponent(query)}`),
+  uploadAttachment: (conversationId, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return apiRequest(`/api/conversations/${conversationId}/attachments`, {
+      method: 'POST',
+      body: form
+    });
+  },
+  deleteAttachment: (conversationId, attachmentId) => apiRequest(
+    `/api/conversations/${conversationId}/attachments/${attachmentId}`,
+    { method: 'DELETE' }
+  ),
   savePushSubscription: (subscription) => apiRequest('/api/push/subscriptions', {
     method: 'PUT',
     body: JSON.stringify(subscription)
@@ -85,8 +100,11 @@ const api = {
     method: 'DELETE',
     body: JSON.stringify({ endpoint })
   }),
-  sendMessage: (conversationId, text, replyToId = null) => apiRequest(
+  sendMessage: (conversationId, text, replyToId = null, attachmentIds = [], tenorGifs = []) => apiRequest(
     `/api/conversations/${conversationId}/messages`,
-    { method: 'POST', body: JSON.stringify({ text, replyToId }) }
+    {
+      method: 'POST',
+      body: JSON.stringify({ text, replyToId, attachmentIds, tenorGifs })
+    }
   )
 };

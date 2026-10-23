@@ -9,7 +9,13 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  const payload = event.data ? event.data.json() : {};
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = {};
   const title = typeof payload.title === 'string' ? payload.title : 'New message';
   const body = typeof payload.body === 'string' ? payload.body : 'You have a new message.';
   const conversationId = Number(payload.conversationId);
@@ -20,8 +26,8 @@ self.addEventListener('push', (event) => {
 
     await self.registration.showNotification(title, {
       body,
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
+      icon: '/icon.svg',
+      badge: '/icon.svg',
       tag: Number.isSafeInteger(conversationId)
         ? `conversation-${conversationId}`
         : 'new-message',

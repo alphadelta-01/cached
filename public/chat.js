@@ -52,6 +52,17 @@ const messagesElement = document.getElementById('messages');
 const messageInput = document.getElementById('message-input');
 const sendButton = document.getElementById('send-button');
 const composer = document.getElementById('composer');
+const attachmentToggle = document.getElementById('attachment-toggle');
+const attachmentMenu = document.getElementById('attachment-menu');
+const chooseMediaButton = document.getElementById('choose-media');
+const attachmentFileInput = document.getElementById('attachment-file');
+const attachmentPreview = document.getElementById('attachment-preview');
+const attachmentStatus = document.getElementById('attachment-status');
+const openTenorButton = document.getElementById('open-tenor');
+const tenorSearchPanel = document.getElementById('tenor-search-panel');
+const tenorSearchInput = document.getElementById('tenor-search-input');
+const tenorSearchButton = document.getElementById('tenor-search-button');
+const tenorResults = document.getElementById('tenor-results');
 const settingsForm = document.getElementById('settings-form');
 const settingsStatus = document.getElementById('settings-status');
 const saveToast = document.getElementById('save-toast');
@@ -115,6 +126,9 @@ let onlineUserIds = new Set();
 let replyTarget = null;
 let contextMessage = null;
 let formatSelection = null;
+let selectedAttachments = [];
+let attachmentUploadsPending = false;
+let messageSendPending = false;
 let forwardMessageTarget = null;
 let deleteMessageTarget = null;
 let pushRegistration;
@@ -688,6 +702,154 @@ function editorToMessageText() {
   return `\u2063${serializeChildren(messageInput)}`;
 }
 
+function closeAttachmentMenu() {
+  attachmentMenu.hidden = true;
+  attachmentToggle.setAttribute('aria-expanded', 'false');
+  tenorSearchPanel.hidden = true;
+  chooseMediaButton.hidden = false;
+  openTenorButton.hidden = false;
+}
+
+function renderAttachmentPreview() {
+  attachmentPreview.replaceChildren();
+  attachmentPreview.hidden = selectedAttachments.length === 0;
+  for (const attachment of selectedAttachments) {
+    const chip = document.createElement('div');
+    chip.className = 'attachment-preview-item';
+    const label = document.createElement('span');
+    label.textContent = attachment.name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'attachment-remove-button';
+    remove.disabled = messageSendPending;
+    remove.setAttribute('aria-label', `Remove ${attachment.name}`);
+    remove.textContent = '×';
+    remove.addEventListener('click', async () => {
+      if (attachment.id) {
+        try {
+          await api.deleteAttachment(appState.currentConversation.id, attachment.id);
+        } catch (error) {
+          setStatus(attachmentStatus, error.message);
+          return;
+        }
+      }
+      selectedAttachments = selectedAttachments.filter((item) => item !== attachment);
+      renderAttachmentPreview();
+    });
+    chip.append(label, remove);
+    attachmentPreview.append(chip);
+  }
+}
+
+async function discardSelectedAttachments(conversationId) {
+  const stagedAttachments = selectedAttachments.filter((attachment) => attachment.id);
+  selectedAttachments = [];
+  renderAttachmentPreview();
+  setStatus(attachmentStatus);
+  if (!conversationId) return;
+  for (const attachment of stagedAttachments) {
+    try {
+      await api.deleteAttachment(conversationId, attachment.id);
+    } catch (error) {
+      setStatus(sidebarStatus, error.message);
+    }
+  }
+}
+
+async function uploadSelectedFiles(files) {
+  const conversation = appState.currentConversation;
+  if (!conversation) return;
+  const remaining = 5 - selectedAttachments.length;
+  if (remaining <= 0) {
+    setStatus(attachmentStatus, 'You can attach up to five files to a message.');
+    return;
+  }
+  const filesToUpload = files.slice(0, remaining);
+  if (files.length > remaining) {
+    setStatus(attachmentStatus, 'Only five attachments can be sent in one message. Extra files were skipped.');
+  } else {
+    setStatus(attachmentStatus);
+  }
+
+  attachmentUploadsPending = true;
+  attachmentToggle.disabled = true;
+  try {
+    for (const file of filesToUpload) {
+      if (file.size > 25 * 1024 * 1024) {
+        setStatus(attachmentStatus, `${file.name} is larger than the 25 MB limit.`);
+        continue;
+      }
+      try {
+        const result = await api.uploadAttachment(conversation.id, file);
+        if (appState.currentConversation?.id !== conversation.id) {
+          await api.deleteAttachment(conversation.id, result.attachment.id);
+          continue;
+        }
+        selectedAttachments.push(result.attachment);
+        renderAttachmentPreview();
+      } catch (error) {
+        setStatus(attachmentStatus, error.message);
+      }
+    }
+  } finally {
+    attachmentUploadsPending = false;
+    attachmentToggle.disabled = false;
+  }
+}
+
+async function searchTenorGifs() {
+  const query = tenorSearchInput.value.trim();
+  if (!query) {
+    setStatus(attachmentStatus, 'Enter a search term for Tenor GIFs.');
+    return;
+  }
+  tenorSearchButton.disabled = true;
+  tenorResults.replaceChildren(createEmptyItem('Searching Tenor…'));
+  setStatus(attachmentStatus);
+  try {
+    const { gifs } = await api.searchTenorGifs(query);
+    tenorResults.replaceChildren();
+    if (!gifs.length) {
+      tenorResults.append(createEmptyItem('No GIFs found.'));
+      return;
+    }
+    for (const gif of gifs) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'tenor-result';
+      option.setAttribute('aria-label', `Add GIF: ${gif.title}`);
+      const image = document.createElement('img');
+      image.src = gif.preview;
+      image.alt = gif.title;
+      image.loading = 'lazy';
+      option.append(image);
+      option.addEventListener('click', () => {
+        if (selectedAttachments.length >= 5) {
+          setStatus(attachmentStatus, 'You can attach up to five files to a message.');
+          return;
+        }
+        if (selectedAttachments.some((attachment) => attachment.url === gif.url)) return;
+        selectedAttachments.push({
+          name: gif.title || 'Tenor GIF',
+          mimeType: 'image/gif',
+          size: 0,
+          url: gif.url,
+          external: true
+        });
+        renderAttachmentPreview();
+        closeAttachmentMenu();
+        messageInput.focus();
+      });
+      tenorResults.append(option);
+    }
+  } catch (error) {
+    tenorResults.replaceChildren();
+    setStatus(attachmentStatus, error.message);
+  } finally {
+    tenorSearchButton.disabled = false;
+  }
+}
+
 function removeMessageFromCurrentView(messageId) {
   messages = messages.filter((message) => message.id !== messageId);
   for (const message of messages) {
@@ -838,8 +1000,18 @@ function setReplyTarget(message) {
 }
 
 async function openConversation(conversation) {
+  if (
+    messageSendPending
+    && appState.currentConversation?.id !== conversation.id
+  ) {
+    setStatus(sidebarStatus, 'Wait for the message to finish sending before switching chats.');
+    return;
+  }
   const requestId = ++openedConversationRequest;
   closeMessageContextMenu();
+  if (appState.currentConversation?.id !== conversation.id && selectedAttachments.length) {
+    await discardSelectedAttachments(appState.currentConversation?.id);
+  }
   if (appState.currentConversation) {
     socket.emit('conversation:leave', appState.currentConversation.id);
   }
@@ -1346,7 +1518,15 @@ searchQuery.addEventListener('input', () => {
   }
 });
 
-document.getElementById('back-button').addEventListener('click', () => {
+document.getElementById('back-button').addEventListener('click', async () => {
+  if (messageSendPending) {
+    setStatus(conversationStatus, 'Wait for the message to finish sending before leaving this chat.');
+    return;
+  }
+  const previousConversationId = appState.currentConversation?.id;
+  if (selectedAttachments.length) {
+    await discardSelectedAttachments(previousConversationId);
+  }
   if (appState.currentConversation) {
     socket.emit('conversation:leave', appState.currentConversation.id);
   }
@@ -1364,20 +1544,35 @@ composer.addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = editorToMessageText();
   const conversation = appState.currentConversation;
-  if (!messageInput.innerText.trim() || !conversation) return;
+  if (!conversation) return;
+  if (attachmentUploadsPending) {
+    setStatus(attachmentStatus, 'Wait for uploads to finish before sending.');
+    return;
+  }
+  const attachments = selectedAttachments.slice();
+  if (!messageInput.innerText.trim() && attachments.length === 0) return;
   if (editorTextLength() > 4000) {
     setStatus(conversationStatus, 'Messages must be 4,000 characters or fewer.');
     return;
   }
   const reply = replyTarget;
   sendButton.disabled = true;
+  attachmentToggle.disabled = true;
+  messageSendPending = true;
+  renderAttachmentPreview();
   setStatus(conversationStatus);
+  closeAttachmentMenu();
+  const editorSnapshot = messageInput.cloneNode(true);
 
   const pendingMessage = {
     id: -Date.now(),
     senderId: appState.currentUser.id,
     senderDisplayName: 'You',
-    text,
+    text: messageInput.innerText.trim() ? text : '',
+    attachments: attachments.map((attachment, index) => ({
+      ...attachment,
+      id: attachment.id || `tenor-${Date.now()}-${index}`
+    })),
     createdAt: new Date().toISOString(),
     messageColor: appState.currentUser.messageColor,
     replyTo: reply
@@ -1394,7 +1589,15 @@ composer.addEventListener('submit', async (event) => {
   messageInput.replaceChildren();
 
   try {
-    const result = await api.sendMessage(conversation.id, text, reply?.id || null);
+    const result = await api.sendMessage(
+      conversation.id,
+      pendingMessage.text,
+      reply?.id || null,
+      attachments.filter((attachment) => attachment.id).map((attachment) => attachment.id),
+      attachments.filter((attachment) => attachment.external).map(
+        ({ url }) => ({ url })
+      )
+    );
     const wasCurrent = appState.currentConversation?.id === conversation.id;
     const pendingIndex = messages.findIndex((message) => message.id === pendingMessage.id);
     if (pendingIndex >= 0) {
@@ -1411,7 +1614,18 @@ composer.addEventListener('submit', async (event) => {
     }
     updateConversationFromMessage(conversation.id, result.message);
     if (replyTarget?.id === reply?.id) clearReplyTarget();
+    if (appState.currentConversation?.id === conversation.id) {
+      selectedAttachments = [];
+      renderAttachmentPreview();
+      setStatus(attachmentStatus);
+    }
   } catch (error) {
+    if (
+      appState.currentConversation?.id === conversation.id
+      && !messageInput.innerText.trim()
+    ) {
+      messageInput.innerHTML = editorSnapshot.innerHTML;
+    }
     const pendingIndex = messages.findIndex((message) => message.id === pendingMessage.id);
     if (pendingIndex >= 0) {
       messages.splice(pendingIndex, 1);
@@ -1419,9 +1633,48 @@ composer.addEventListener('submit', async (event) => {
     }
     setStatus(conversationStatus, error.message);
   } finally {
+    messageSendPending = false;
+    renderAttachmentPreview();
     sendButton.disabled = false;
+    attachmentToggle.disabled = false;
     messageInput.focus();
   }
+});
+
+attachmentToggle.addEventListener('click', () => {
+  const open = attachmentMenu.hidden;
+  attachmentMenu.hidden = !open;
+  attachmentToggle.setAttribute('aria-expanded', String(open));
+  if (open) closeMessageContextMenu();
+});
+
+chooseMediaButton.addEventListener('click', () => {
+  closeAttachmentMenu();
+  attachmentFileInput.click();
+});
+
+attachmentFileInput.addEventListener('change', () => {
+  uploadSelectedFiles([...attachmentFileInput.files]);
+  attachmentFileInput.value = '';
+});
+
+openTenorButton.addEventListener('click', () => {
+  chooseMediaButton.hidden = true;
+  openTenorButton.hidden = true;
+  tenorSearchPanel.hidden = false;
+  tenorSearchInput.focus();
+});
+
+tenorSearchButton.addEventListener('click', searchTenorGifs);
+tenorSearchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    searchTenorGifs();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.message-input-area')) closeAttachmentMenu();
 });
 
 messageInput.addEventListener('contextmenu', (event) => {
