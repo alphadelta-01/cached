@@ -1,8 +1,10 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
 const { promisify } = require('util');
+const webPush = require('web-push');
 const { pool, initializeDatabase } = require('./database');
 
 const scrypt = promisify(crypto.scrypt);
@@ -11,6 +13,26 @@ const PENDING_SIGNUP_DURATION = 15 * 60 * 1000;
 const RECOVERY_WORD_COUNT = 24;
 const COOKIE_NAME = 'chat_session';
 const DEFAULT_MESSAGE_COLOR = '#2B2B2B';
+const PUSH_SERVICE_HOSTS = [
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'web.push.apple.com',
+  'notify.windows.com'
+];
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (Boolean(VAPID_PUBLIC_KEY) !== Boolean(VAPID_PRIVATE_KEY)) {
+  throw new Error('Configure both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push notifications.');
+}
+if (pushEnabled) {
+  webPush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:notifications@cached.local',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+}
 
 const bip39Promise = Promise.all([
   import('@scure/bip39'),
@@ -57,7 +79,8 @@ function getCookie(request, name) {
 async function getUserFromToken(token) {
   if (!token) return null;
   const result = await pool.query(`
-    SELECT users.id, users.username, users.display_name, users.message_color
+    SELECT users.id, users.username, users.display_name, users.message_color,
+      users.time_precision, users.bio, users.show_last_seen, users.last_seen_at
     FROM sessions
     JOIN users ON users.id = sessions.user_id
     WHERE sessions.token_hash = $1 AND sessions.expires_at > $2
@@ -65,13 +88,17 @@ async function getUserFromToken(token) {
   return result.rows[0] || null;
 }
 
-function publicUser(user) {
-  return {
+function publicUser(user, includePrivacySettings = false) {
+  const result = {
     id: user.id,
     username: user.username,
     displayName: user.display_name,
-    messageColor: user.message_color
+    messageColor: user.message_color,
+    timePrecision: user.time_precision || user.timePrecision || 'minute',
+    bio: user.bio || ''
   };
+  if (includePrivacySettings) result.showLastSeen = user.show_last_seen !== false;
+  return result;
 }
 
 function setSessionCookie(response, token) {
@@ -123,6 +150,43 @@ function parseConversationId(value) {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+async function getConversationPeerIds(userId) {
+  const result = await pool.query(`
+    SELECT CASE WHEN user_low = $1 THEN user_high ELSE user_low END AS peer_id
+    FROM conversations
+    WHERE user_low = $1 OR user_high = $1
+  `, [userId]);
+  return result.rows.map((row) => row.peer_id);
+}
+
+function emitPresenceToPeers(peerIds, event) {
+  for (const peerId of peerIds) {
+    io.to(`user:${peerId}`).emit('presence:update', event);
+  }
+}
+
+async function publishLastSeen(userId) {
+  try {
+    const result = await pool.query(`
+      UPDATE users SET last_seen_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING last_seen_at, show_last_seen
+    `, [userId]);
+    if (activeUserSockets.has(userId)) return;
+    const user = result.rows[0];
+    if (!user) return;
+    const peerIds = await getConversationPeerIds(userId);
+    if (activeUserSockets.has(userId)) return;
+    emitPresenceToPeers(peerIds, {
+      userId,
+      online: false,
+      lastSeenAt: user.show_last_seen ? user.last_seen_at : null
+    });
+  } catch (error) {
+    console.error('Could not update user last-seen time:', error);
+  }
+}
+
 async function isConversationVisibleToUser(conversationId, userId) {
   const result = await pool.query(`
     SELECT 1 FROM conversations c
@@ -134,6 +198,20 @@ async function isConversationVisibleToUser(conversationId, userId) {
   return result.rowCount > 0;
 }
 
+async function markConversationRead(conversationId, userId) {
+  await pool.query(`
+    INSERT INTO conversation_reads (conversation_id, user_id, last_read_message_id)
+    SELECT $1, $2, COALESCE(MAX(id), 0)
+    FROM private_messages
+    WHERE conversation_id = $1
+    ON CONFLICT (conversation_id, user_id) DO UPDATE
+    SET last_read_message_id = GREATEST(
+      conversation_reads.last_read_message_id,
+      EXCLUDED.last_read_message_id
+    )
+  `, [conversationId, userId]);
+}
+
 function formatMessage(message) {
   return {
     id: message.id,
@@ -141,19 +219,114 @@ function formatMessage(message) {
     senderId: message.sender_id,
     senderDisplayName: message.display_name,
     messageColor: message.message_color,
-    createdAt: message.created_at
+    createdAt: message.created_at,
+    forwardedFrom: message.forwarded_from_name || null,
+    replyTo: message.reply_to_id
+      ? {
+        id: message.reply_to_id,
+        text: message.reply_to_text,
+        senderId: message.reply_to_sender_id,
+        senderDisplayName: message.reply_to_display_name
+      }
+      : null
   };
 }
 
 const app = express();
-app.use(express.json({ limit: '10kb' }));
-app.use(express.static('public'));
+app.use(express.json({ limit: '64kb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const server = http.createServer(app);
 const io = new Server(server);
+const activeUserSockets = new Map();
+
+app.get('/api/push/config', requireUser, (request, response) => {
+  if (!pushEnabled) {
+    response.status(503).json({ error: 'Push notifications are not configured on the server.' });
+    return;
+  }
+  response.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.put('/api/push/subscriptions', requireUser, async (request, response) => {
+  if (!pushEnabled) {
+    response.status(503).json({ error: 'Push notifications are not configured on the server.' });
+    return;
+  }
+
+  const subscription = request.body;
+  let endpoint;
+  try {
+    endpoint = new URL(subscription && subscription.endpoint);
+  } catch {
+    response.status(400).json({ error: 'The push subscription is invalid.' });
+    return;
+  }
+  if (
+    endpoint.protocol !== 'https:' ||
+    (endpoint.port && endpoint.port !== '443') ||
+    endpoint.href.length > 2048 ||
+    !PUSH_SERVICE_HOSTS.some((host) => (
+      endpoint.hostname === host || endpoint.hostname.endsWith(`.${host}`)
+    )) ||
+    !subscription.keys ||
+    typeof subscription.keys.p256dh !== 'string' ||
+    typeof subscription.keys.auth !== 'string'
+  ) {
+    response.status(400).json({ error: 'The push subscription is invalid.' });
+    return;
+  }
+
+  await pool.query(`
+    INSERT INTO push_subscriptions (endpoint, user_id, subscription_json)
+    VALUES ($1, $2, $3::jsonb)
+    ON CONFLICT (endpoint) DO UPDATE
+    SET user_id = EXCLUDED.user_id,
+        subscription_json = EXCLUDED.subscription_json,
+        created_at = CURRENT_TIMESTAMP
+  `, [endpoint.href, request.user.id, JSON.stringify(subscription)]);
+  response.status(201).json({ success: true });
+});
+
+app.delete('/api/push/subscriptions', requireUser, async (request, response) => {
+  const endpoint = request.body && request.body.endpoint;
+  if (typeof endpoint !== 'string' || endpoint.length > 2048) {
+    response.status(400).json({ error: 'The push subscription is invalid.' });
+    return;
+  }
+
+  await pool.query(
+    'DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2',
+    [endpoint, request.user.id]
+  );
+  response.json({ success: true });
+});
+
+async function sendPushNotifications(userId, payload) {
+  if (!pushEnabled) return;
+
+  const result = await pool.query(
+    'SELECT endpoint, subscription_json FROM push_subscriptions WHERE user_id = $1',
+    [userId]
+  );
+  await Promise.all(result.rows.map(async ({ endpoint, subscription_json: subscription }) => {
+    try {
+      await webPush.sendNotification(subscription, JSON.stringify(payload), { TTL: 60 });
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        await pool.query(
+          'DELETE FROM push_subscriptions WHERE endpoint = $1',
+          [endpoint]
+        );
+        return;
+      }
+      console.error('Could not send push notification:', error);
+    }
+  }));
+}
 
 app.get('/api/session', requireUser, (request, response) => {
-  response.json({ user: publicUser(request.user) });
+  response.json({ user: publicUser(request.user, true) });
 });
 
 app.post('/api/register/prepare', async (request, response) => {
@@ -300,11 +473,12 @@ app.post('/api/register/complete', async (request, response) => {
     }
     await createSession(userId, response);
     const userResult = await pool.query(
-      'SELECT id, username, display_name, message_color FROM users WHERE id = $1',
+      `SELECT id, username, display_name, message_color, time_precision, bio,
+        show_last_seen, last_seen_at FROM users WHERE id = $1`,
       [userId]
     );
     const user = userResult.rows[0];
-    response.status(201).json({ user: publicUser(user) });
+    response.status(201).json({ user: publicUser(user, true) });
   } catch (error) {
     if (error.code === '23505') {
       response.status(409).json({ error: 'That username is already taken.' });
@@ -330,7 +504,8 @@ app.post('/api/recover', async (request, response) => {
   }
 
   const userResult = await pool.query(`
-    SELECT id, username, display_name, message_color, recovery_hash
+    SELECT id, username, display_name, message_color, time_precision, bio,
+      show_last_seen, last_seen_at, recovery_hash
     FROM users WHERE username = $1
   `, [username]);
   const user = userResult.rows[0];
@@ -353,7 +528,7 @@ app.post('/api/recover', async (request, response) => {
     client.release();
   }
   await createSession(user.id, response);
-  response.json({ user: publicUser(user) });
+  response.json({ user: publicUser(user, true) });
 });
 
 app.post('/api/login', async (request, response) => {
@@ -364,7 +539,8 @@ app.post('/api/login', async (request, response) => {
   }
 
   const userResult = await pool.query(`
-    SELECT id, username, display_name, message_color, password_hash
+    SELECT id, username, display_name, message_color, time_precision, bio,
+      show_last_seen, last_seen_at, password_hash
     FROM users WHERE username = $1
   `, [rawUsername.trim().toLowerCase()]);
   const user = userResult.rows[0];
@@ -383,7 +559,7 @@ app.post('/api/login', async (request, response) => {
   }
 
   await createSession(user.id, response);
-  response.json({ user: publicUser(user) });
+  response.json({ user: publicUser(user, true) });
 });
 
 app.post('/api/logout', async (request, response) => {
@@ -398,9 +574,21 @@ app.post('/api/logout', async (request, response) => {
 });
 
 app.put('/api/profile', requireUser, async (request, response) => {
-  const { username: rawUsername, displayName, messageColor } = request.body || {};
+  const {
+    username: rawUsername,
+    displayName,
+    messageColor,
+    timePrecision,
+    bio: rawBio,
+    showLastSeen: requestedShowLastSeen
+  } = request.body || {};
   const username = typeof rawUsername === 'string' ? rawUsername.trim().toLowerCase() : '';
   const normalizedDisplayName = typeof displayName === 'string' ? displayName.trim() : '';
+  const bio = typeof rawBio === 'string' ? rawBio.trim() : '';
+  const normalizedTimePrecision = timePrecision === 'second' ? 'second' : 'minute';
+  const showLastSeen = typeof requestedShowLastSeen === 'boolean'
+    ? requestedShowLastSeen
+    : request.user.show_last_seen !== false;
   if (!validUsername(username)) {
     response.status(400).json({
       error: 'Username must be 3–24 characters and can contain letters, numbers, and _.'
@@ -411,6 +599,10 @@ app.put('/api/profile', requireUser, async (request, response) => {
     response.status(400).json({ error: 'Display name must be 1–100 characters.' });
     return;
   }
+  if (bio.length > 500) {
+    response.status(400).json({ error: 'Profile description must be 500 characters or fewer.' });
+    return;
+  }
   if (!validColor(messageColor)) {
     response.status(400).json({ error: 'Invalid color format. Use #RRGGBB.' });
     return;
@@ -418,13 +610,31 @@ app.put('/api/profile', requireUser, async (request, response) => {
 
   try {
     await pool.query(`
-      UPDATE users SET username = $1, display_name = $2, message_color = $3 WHERE id = $4
-    `, [username, normalizedDisplayName, messageColor.toUpperCase(), request.user.id]);
+      UPDATE users
+      SET username = $1, display_name = $2, message_color = $3,
+        time_precision = $5, bio = $6, show_last_seen = $7
+      WHERE id = $4
+    `, [
+      username,
+      normalizedDisplayName,
+      messageColor.toUpperCase(),
+      request.user.id,
+      normalizedTimePrecision,
+      bio,
+      showLastSeen
+    ]);
     const userResult = await pool.query(`
-      SELECT id, username, display_name, message_color FROM users WHERE id = $1
+      SELECT id, username, display_name, message_color, time_precision, bio,
+        show_last_seen, last_seen_at FROM users WHERE id = $1
     `, [request.user.id]);
     const user = userResult.rows[0];
-    response.json({ user: publicUser(user) });
+    const peerIds = await getConversationPeerIds(user.id);
+    emitPresenceToPeers(peerIds, {
+      userId: user.id,
+      online: activeUserSockets.has(user.id),
+      lastSeenAt: user.show_last_seen ? user.last_seen_at : null
+    });
+    response.json({ user: publicUser(user, true) });
   } catch (error) {
     if (error.code === '23505') {
       response.status(409).json({ error: 'That username is already taken.' });
@@ -432,6 +642,32 @@ app.put('/api/profile', requireUser, async (request, response) => {
     }
     throw error;
   }
+});
+
+app.get('/api/users/:id/profile', requireUser, async (request, response) => {
+  const userId = parseConversationId(request.params.id);
+  if (!userId) {
+    response.status(404).json({ error: 'Profile not found.' });
+    return;
+  }
+  const result = await pool.query(`
+    SELECT id, username, display_name, bio
+    FROM users
+    WHERE id = $1
+  `, [userId]);
+  if (result.rowCount === 0) {
+    response.status(404).json({ error: 'Profile not found.' });
+    return;
+  }
+  const profile = result.rows[0];
+  response.json({
+    profile: {
+      id: profile.id,
+      username: profile.username,
+      displayName: profile.display_name,
+      bio: profile.bio || ''
+    }
+  });
 });
 
 app.get('/api/users/search', requireUser, async (request, response) => {
@@ -446,15 +682,32 @@ app.get('/api/users/search', requireUser, async (request, response) => {
     ? parsedId
     : null;
   const usersResult = await pool.query(`
-    SELECT id, username, display_name, message_color
+    SELECT users.id, users.username, users.display_name, users.message_color,
+      users.time_precision, users.bio,
+      COALESCE(unread.unread_count, 0)::integer AS unread_count
     FROM users
-    WHERE id != $1
+    LEFT JOIN conversations c
+      ON c.user_low = LEAST($1, users.id)
+      AND c.user_high = GREATEST($1, users.id)
+    LEFT JOIN conversation_reads read_state
+      ON read_state.conversation_id = c.id AND read_state.user_id = $1
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS unread_count
+      FROM private_messages
+      LEFT JOIN hidden_messages hidden
+        ON hidden.message_id = private_messages.id AND hidden.user_id = $1
+      WHERE conversation_id = c.id
+        AND sender_id = users.id
+        AND id > COALESCE(read_state.last_read_message_id, 0)
+        AND hidden.message_id IS NULL
+    ) unread ON TRUE
+    WHERE users.id != $1
       AND (
-        ($2::integer IS NOT NULL AND id = $2)
-        OR username ILIKE $3
-        OR display_name ILIKE $3
+        ($2::integer IS NOT NULL AND users.id = $2)
+        OR users.username ILIKE $3
+        OR users.display_name ILIKE $3
       )
-    ORDER BY CASE WHEN username = $4 THEN 0 ELSE 1 END, username
+    ORDER BY CASE WHEN users.username = $4 THEN 0 ELSE 1 END, users.username
     LIMIT 30
   `, [
     request.user.id,
@@ -463,7 +716,12 @@ app.get('/api/users/search', requireUser, async (request, response) => {
     query.toLowerCase()
   ]);
   const users = usersResult.rows;
-  response.json({ users: users.map(publicUser) });
+  response.json({
+    users: users.map((user) => ({
+      ...publicUser(user),
+      unreadCount: user.unread_count
+    }))
+  });
 });
 
 app.get('/api/conversations', requireUser, async (request, response) => {
@@ -474,10 +732,14 @@ app.get('/api/conversations', requireUser, async (request, response) => {
       other.username AS other_username,
       other.display_name AS other_display_name,
       other.message_color AS other_message_color,
+      other.time_precision AS other_time_precision,
+      other.bio AS other_bio,
+      CASE WHEN other.show_last_seen THEN other.last_seen_at ELSE NULL END AS other_last_seen_at,
       last_message.text AS last_text,
       last_message.created_at AS last_created_at,
       last_message.id AS last_message_id,
-      last_message.sender_id AS last_sender_id
+      last_message.sender_id AS last_sender_id,
+      COALESCE(unread.unread_count, 0)::integer AS unread_count
     FROM conversations c
     LEFT JOIN hidden_conversations hidden
       ON hidden.conversation_id = c.id AND hidden.user_id = $1
@@ -485,13 +747,33 @@ app.get('/api/conversations', requireUser, async (request, response) => {
       WHEN c.user_low = $1 THEN c.user_high ELSE c.user_low
     END
     LEFT JOIN LATERAL (
-      SELECT text, created_at, id, sender_id
+      SELECT private_messages.text, private_messages.created_at,
+        private_messages.id, private_messages.sender_id
       FROM private_messages
+      LEFT JOIN hidden_messages hidden
+        ON hidden.message_id = private_messages.id AND hidden.user_id = $1
       WHERE conversation_id = c.id
+        AND hidden.message_id IS NULL
       ORDER BY id DESC
       LIMIT 1
     ) last_message ON TRUE
-    WHERE (c.user_low = $1 OR c.user_high = $1) AND hidden.user_id IS NULL
+    LEFT JOIN conversation_reads read_state
+      ON read_state.conversation_id = c.id AND read_state.user_id = $1
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS unread_count
+      FROM private_messages
+      LEFT JOIN hidden_messages hidden
+        ON hidden.message_id = private_messages.id AND hidden.user_id = $1
+      WHERE conversation_id = c.id
+        AND sender_id = CASE
+          WHEN c.user_low = $1 THEN c.user_high ELSE c.user_low
+        END
+        AND id > COALESCE(read_state.last_read_message_id, 0)
+        AND hidden.message_id IS NULL
+    ) unread ON TRUE
+    WHERE (c.user_low = $1 OR c.user_high = $1)
+      AND hidden.user_id IS NULL
+      AND last_message.id IS NOT NULL
     ORDER BY COALESCE(last_message.created_at, c.created_at) DESC,
       COALESCE(last_message.id, c.id) DESC
   `, [request.user.id]);
@@ -504,8 +786,13 @@ app.get('/api/conversations', requireUser, async (request, response) => {
         id: row.other_id,
         username: row.other_username,
         displayName: row.other_display_name,
-        messageColor: row.other_message_color
+        messageColor: row.other_message_color,
+        timePrecision: row.other_time_precision || 'minute',
+        bio: row.other_bio || '',
+        lastSeenAt: row.other_last_seen_at,
+        online: activeUserSockets.has(row.other_id)
       },
+      unreadCount: row.unread_count,
       lastMessage: row.last_text === null ? null : {
         text: row.last_text,
         createdAt: row.last_created_at,
@@ -526,7 +813,11 @@ app.post('/api/conversations', requireUser, async (request, response) => {
     return;
   }
 
-  const otherUser = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+  const otherUser = await pool.query(`
+    SELECT id, username, display_name,
+      CASE WHEN show_last_seen THEN last_seen_at ELSE NULL END AS last_seen_at
+    FROM users WHERE id = $1
+  `, [userId]);
   if (otherUser.rowCount === 0) {
     response.status(404).json({ error: 'User not found.' });
     return;
@@ -550,7 +841,28 @@ app.post('/api/conversations', requireUser, async (request, response) => {
       conversationId: conversation.id
     });
   }
-  response.json({ conversationId: conversation.id });
+  if (activeUserSockets.has(userId)) {
+    io.to(`user:${request.user.id}`).emit('presence:update', {
+      userId,
+      online: true
+    });
+  }
+  if (activeUserSockets.has(request.user.id)) {
+    io.to(`user:${userId}`).emit('presence:update', {
+      userId: request.user.id,
+      online: true
+    });
+  }
+  response.json({
+    conversationId: conversation.id,
+    otherUser: {
+      id: otherUser.rows[0].id,
+      username: otherUser.rows[0].username,
+      displayName: otherUser.rows[0].display_name,
+      lastSeenAt: otherUser.rows[0].last_seen_at,
+      online: activeUserSockets.has(userId)
+    }
+  });
 });
 
 app.delete('/api/conversations/:id', requireUser, async (request, response) => {
@@ -605,17 +917,41 @@ app.get('/api/conversations/:id/messages', requireUser, async (request, response
 
   const messagesResult = await pool.query(`
     SELECT message.id, message.text, message.sender_id, message.created_at,
-      users.display_name, users.message_color
+      users.display_name, users.message_color,
+      reply.id AS reply_to_id, reply.text AS reply_to_text,
+      reply.sender_id AS reply_to_sender_id,
+      reply_user.display_name AS reply_to_display_name,
+      message.forwarded_from_name
     FROM (
       SELECT * FROM private_messages
       WHERE conversation_id = $1
       ORDER BY id DESC LIMIT 200
     ) message
     JOIN users ON users.id = message.sender_id
+    LEFT JOIN hidden_messages reply_hidden
+      ON reply_hidden.message_id = message.reply_to_id AND reply_hidden.user_id = $2
+    LEFT JOIN private_messages reply
+      ON reply.id = message.reply_to_id AND reply_hidden.message_id IS NULL
+    LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+    LEFT JOIN hidden_messages hidden
+      ON hidden.message_id = message.id AND hidden.user_id = $2
+    WHERE hidden.message_id IS NULL
     ORDER BY message.id
-  `, [conversationId]);
+  `, [conversationId, request.user.id]);
   const messages = messagesResult.rows;
+  await markConversationRead(conversationId, request.user.id);
   response.json({ messages: messages.map(formatMessage) });
+});
+
+app.post('/api/conversations/:id/read', requireUser, async (request, response) => {
+  const conversationId = parseConversationId(request.params.id);
+  if (!conversationId || !await isConversationVisibleToUser(conversationId, request.user.id)) {
+    response.status(404).json({ error: 'Chat not found.' });
+    return;
+  }
+
+  await markConversationRead(conversationId, request.user.id);
+  response.json({ success: true });
 });
 
 app.post('/api/conversations/:id/messages', requireUser, async (request, response) => {
@@ -626,43 +962,230 @@ app.post('/api/conversations/:id/messages', requireUser, async (request, respons
   }
 
   const text = typeof request.body.text === 'string' ? request.body.text.trim() : '';
-  if (!text || text.length > 4000) {
-    response.status(400).json({ error: 'Message must be 1–4,000 characters.' });
+  const visibleText = text.startsWith('\u2063')
+    ? text.slice(1)
+      .replace(/<br>/gi, '\n')
+      .replace(/<\/?(?:strong|em|u|s)>/gi, '')
+      .replace(/&(?:amp|lt|gt);/g, 'x')
+    : text.replace(/\*\*|__|~~|\*/g, '');
+  if (!visibleText.trim() || text.length > 40000 || visibleText.length > 4000) {
+    response.status(400).json({ error: 'Message must be 1–4,000 visible characters.' });
     return;
   }
 
+  const hasReplyTarget = request.body.replyToId !== undefined
+    && request.body.replyToId !== null;
+  const replyToId = hasReplyTarget ? parseConversationId(request.body.replyToId) : null;
+  if (hasReplyTarget && !replyToId) {
+    response.status(400).json({ error: 'The message to reply to is invalid.' });
+    return;
+  }
+  if (replyToId) {
+    const replyTarget = await pool.query(`
+      SELECT 1 FROM private_messages
+      WHERE id = $1 AND conversation_id = $2
+    `, [replyToId, conversationId]);
+    if (replyTarget.rowCount === 0) {
+      response.status(400).json({ error: 'The message to reply to was not found in this chat.' });
+      return;
+    }
+  }
+
   const insertResult = await pool.query(`
-    INSERT INTO private_messages (conversation_id, sender_id, text)
-    VALUES ($1, $2, $3)
+    INSERT INTO private_messages (conversation_id, sender_id, text, reply_to_id)
+    VALUES ($1, $2, $3, $4)
     RETURNING id
-  `, [conversationId, request.user.id, text]);
+  `, [conversationId, request.user.id, text, replyToId]);
   const messageResult = await pool.query(`
     SELECT private_messages.id, private_messages.text, private_messages.sender_id,
-      private_messages.created_at, users.display_name, users.message_color
+      private_messages.created_at, users.display_name, users.message_color,
+      reply.id AS reply_to_id, reply.text AS reply_to_text,
+      reply.sender_id AS reply_to_sender_id,
+      reply_user.display_name AS reply_to_display_name,
+      private_messages.forwarded_from_name
     FROM private_messages
     JOIN users ON users.id = private_messages.sender_id
+    LEFT JOIN private_messages reply ON reply.id = private_messages.reply_to_id
+    LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
     WHERE private_messages.id = $1
   `, [insertResult.rows[0].id]);
   const message = messageResult.rows[0];
   const formatted = formatMessage(message);
+  const conversationResult = await pool.query(`
+    SELECT user_low, user_high FROM conversations WHERE id = $1
+  `, [conversationId]);
+  const conversation = conversationResult.rows[0];
   const restored = await pool.query(`
     DELETE FROM hidden_conversations WHERE conversation_id = $1
   `, [conversationId]);
   if (restored.rowCount > 0) {
-    const conversationResult = await pool.query(`
-      SELECT user_low, user_high FROM conversations WHERE id = $1
-    `, [conversationId]);
-    const conversation = conversationResult.rows[0];
     const event = { conversationId };
     io.to(`user:${conversation.user_low}`).emit('conversation:restored', event);
     io.to(`user:${conversation.user_high}`).emit('conversation:restored', event);
   }
-  io.to(`conversation:${conversationId}`).emit('conversation:message', {
+  const messageEvent = {
     conversationId,
     message: formatted
+  };
+  io.to(`user:${conversation.user_low}`)
+    .to(`user:${conversation.user_high}`)
+    .emit('conversation:message', messageEvent);
+  const recipientId = request.user.id === conversation.user_low
+    ? conversation.user_high
+    : conversation.user_low;
+  const preview = Array.from(formatted.text);
+  const notificationBody = preview.length > 160
+    ? `${preview.slice(0, 157).join('')}…`
+    : formatted.text;
+  sendPushNotifications(recipientId, {
+    title: `${formatted.senderDisplayName} sent you a message`,
+    body: notificationBody,
+    conversationId
+  }).catch((error) => {
+    console.error('Could not load push subscriptions:', error);
   });
   response.status(201).json({ message: formatted });
 });
+
+app.delete('/api/conversations/:id/messages/:messageId', requireUser, async (request, response) => {
+  const conversationId = parseConversationId(request.params.id);
+  const messageId = parseConversationId(request.params.messageId);
+  if (
+    !conversationId ||
+    !messageId ||
+    !await isConversationVisibleToUser(conversationId, request.user.id)
+  ) {
+    response.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const scope = request.body && request.body.scope;
+  if (scope !== 'self' && scope !== 'everyone') {
+    response.status(400).json({ error: 'Choose who to delete the message for.' });
+    return;
+  }
+
+  const messageResult = await pool.query(`
+    SELECT private_messages.sender_id, conversations.user_low, conversations.user_high
+    FROM private_messages
+    JOIN conversations ON conversations.id = private_messages.conversation_id
+    WHERE private_messages.id = $1 AND private_messages.conversation_id = $2
+      AND (conversations.user_low = $3 OR conversations.user_high = $3)
+  `, [messageId, conversationId, request.user.id]);
+  const message = messageResult.rows[0];
+  if (!message) {
+    response.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  if (scope === 'everyone') {
+    if (message.sender_id !== request.user.id) {
+      response.status(403).json({ error: 'You can delete a message for everyone only if you sent it.' });
+      return;
+    }
+    await pool.query(
+      'DELETE FROM private_messages WHERE id = $1 AND conversation_id = $2',
+      [messageId, conversationId]
+    );
+    const event = { conversationId, messageId };
+    io.to(`user:${message.user_low}`)
+      .to(`user:${message.user_high}`)
+      .emit('message:deleted', event);
+  } else {
+    await pool.query(`
+      INSERT INTO hidden_messages (message_id, user_id) VALUES ($1, $2)
+      ON CONFLICT (message_id, user_id) DO NOTHING
+    `, [messageId, request.user.id]);
+    io.to(`user:${request.user.id}`).emit('message:hidden', { conversationId, messageId });
+  }
+  response.json({ success: true });
+});
+
+app.post(
+  '/api/conversations/:id/messages/:messageId/forward',
+  requireUser,
+  async (request, response) => {
+    const sourceConversationId = parseConversationId(request.params.id);
+    const sourceMessageId = parseConversationId(request.params.messageId);
+    const targetConversationId = parseConversationId(request.body.destinationConversationId);
+    if (
+      !sourceConversationId ||
+      !sourceMessageId ||
+      !targetConversationId ||
+      sourceConversationId === targetConversationId ||
+      !await isConversationVisibleToUser(sourceConversationId, request.user.id) ||
+      !await isConversationVisibleToUser(targetConversationId, request.user.id)
+    ) {
+      response.status(404).json({ error: 'Choose a different chat to forward this message to.' });
+      return;
+    }
+
+    const sourceResult = await pool.query(`
+      SELECT private_messages.text, users.display_name
+      FROM private_messages
+      JOIN users ON users.id = private_messages.sender_id
+      LEFT JOIN hidden_messages hidden
+        ON hidden.message_id = private_messages.id AND hidden.user_id = $3
+      WHERE private_messages.id = $1
+        AND private_messages.conversation_id = $2
+        AND hidden.message_id IS NULL
+    `, [sourceMessageId, sourceConversationId, request.user.id]);
+    const sourceMessage = sourceResult.rows[0];
+    if (!sourceMessage) {
+      response.status(404).json({ error: 'Message not found.' });
+      return;
+    }
+
+    const insertResult = await pool.query(`
+      INSERT INTO private_messages (
+        conversation_id, sender_id, text, forwarded_from_id, forwarded_from_name
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+    `, [
+      targetConversationId,
+      request.user.id,
+      sourceMessage.text,
+      sourceMessageId,
+      sourceMessage.display_name
+    ]);
+    const forwardedResult = await pool.query(`
+      SELECT private_messages.id, private_messages.text, private_messages.sender_id,
+        private_messages.created_at, users.display_name, users.message_color,
+        reply.id AS reply_to_id, reply.text AS reply_to_text,
+        reply.sender_id AS reply_to_sender_id,
+        reply_user.display_name AS reply_to_display_name,
+        private_messages.forwarded_from_name
+      FROM private_messages
+      JOIN users ON users.id = private_messages.sender_id
+      LEFT JOIN private_messages reply ON reply.id = private_messages.reply_to_id
+      LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
+      WHERE private_messages.id = $1
+    `, [insertResult.rows[0].id]);
+    const formatted = formatMessage(forwardedResult.rows[0]);
+    const targetResult = await pool.query(
+      'SELECT user_low, user_high FROM conversations WHERE id = $1',
+      [targetConversationId]
+    );
+    const target = targetResult.rows[0];
+    const restored = await pool.query(
+      'DELETE FROM hidden_conversations WHERE conversation_id = $1',
+      [targetConversationId]
+    );
+    if (restored.rowCount > 0) {
+      const restoredEvent = { conversationId: targetConversationId };
+      io.to(`user:${target.user_low}`).emit('conversation:restored', restoredEvent);
+      io.to(`user:${target.user_high}`).emit('conversation:restored', restoredEvent);
+    }
+    io.to(`user:${target.user_low}`)
+      .to(`user:${target.user_high}`)
+      .emit('conversation:message', {
+        conversationId: targetConversationId,
+        message: formatted
+      });
+    response.status(201).json({ message: formatted });
+  }
+);
 
 app.use((error, request, response, next) => {
   console.error(error);
@@ -691,24 +1214,84 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   socket.join(`session:${socket.data.sessionTokenHash}`);
   socket.join(`user:${socket.data.user.id}`);
+  const userId = socket.data.user.id;
+  socket.data.isPresenceActive = false;
+  getConversationPeerIds(userId).then((peerIds) => {
+    socket.emit(
+      'presence:snapshot',
+      peerIds.filter((peerId) => activeUserSockets.has(peerId))
+    );
+  }).catch((error) => {
+    console.error('Could not load conversation presence:', error);
+  });
 
-  socket.on('conversation:join', (rawId, acknowledge = () => {}) => {
-    const conversationId = parseConversationId(rawId);
-    if (!conversationId || !isConversationVisibleToUser(conversationId, socket.data.user.id)) {
-      acknowledge({ error: 'Chat not found.' });
+  socket.on('presence:active', (isActive) => {
+    const active = isActive === true;
+    if (socket.data.isPresenceActive === active) return;
+
+    const sockets = activeUserSockets.get(userId) || new Set();
+    socket.data.isPresenceActive = active;
+    if (active) {
+      const wasOffline = sockets.size === 0;
+      sockets.add(socket.id);
+      activeUserSockets.set(userId, sockets);
+      if (wasOffline) {
+        getConversationPeerIds(userId).then((peerIds) => {
+          if (activeUserSockets.has(userId)) {
+            emitPresenceToPeers(peerIds, { userId, online: true });
+          }
+        }).catch((error) => {
+          console.error('Could not publish user online status:', error);
+        });
+      }
       return;
     }
-    socket.join(`conversation:${conversationId}`);
-    acknowledge({ success: true });
+
+    sockets.delete(socket.id);
+    if (sockets.size > 0) {
+      activeUserSockets.set(userId, sockets);
+      return;
+    }
+    activeUserSockets.delete(userId);
+    publishLastSeen(userId);
+  });
+
+  socket.on('conversation:join', async (rawId, acknowledge = () => {}) => {
+    const conversationId = parseConversationId(rawId);
+    try {
+      if (!conversationId || !(await isConversationVisibleToUser(conversationId, socket.data.user.id))) {
+        acknowledge({ error: 'Chat not found.' });
+        return;
+      }
+      socket.join(`conversation:${conversationId}`);
+      acknowledge({ success: true });
+    } catch (error) {
+      console.error('Could not verify conversation access:', error);
+      acknowledge({ error: 'Could not join chat.' });
+    }
   });
 
   socket.on('conversation:leave', (rawId) => {
     const conversationId = parseConversationId(rawId);
     if (conversationId) socket.leave(`conversation:${conversationId}`);
   });
+
+  socket.on('disconnect', () => {
+    if (!socket.data.isPresenceActive) return;
+    const sockets = activeUserSockets.get(userId);
+    if (!sockets) return;
+    sockets.delete(socket.id);
+    if (sockets.size > 0) return;
+    activeUserSockets.delete(userId);
+    publishLastSeen(userId);
+  });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error('PORT must be an integer between 1 and 65535.');
+}
+
 initializeDatabase()
   .then(() => {
     server.listen(PORT, () => {

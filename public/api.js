@@ -50,6 +50,7 @@ const api = {
     method: 'PUT',
     body: JSON.stringify(profile)
   }),
+  getUserProfile: (userId) => apiRequest(`/api/users/${userId}/profile`),
   searchUsers: (query) => apiRequest(`/api/users/search?q=${encodeURIComponent(query)}`),
   getConversations: () => apiRequest('/api/conversations'),
   deleteConversation: (conversationId, scope) => apiRequest(
@@ -63,8 +64,29 @@ const api = {
   getMessages: (conversationId) => apiRequest(
     `/api/conversations/${conversationId}/messages`
   ),
-  sendMessage: (conversationId, text) => apiRequest(
+  deleteMessage: (conversationId, messageId, scope) => apiRequest(
+    `/api/conversations/${conversationId}/messages/${messageId}`,
+    { method: 'DELETE', body: JSON.stringify({ scope }) }
+  ),
+  forwardMessage: (conversationId, messageId, destinationConversationId) => apiRequest(
+    `/api/conversations/${conversationId}/messages/${messageId}/forward`,
+    { method: 'POST', body: JSON.stringify({ destinationConversationId }) }
+  ),
+  markConversationRead: (conversationId) => apiRequest(
+    `/api/conversations/${conversationId}/read`,
+    { method: 'POST' }
+  ),
+  getPushConfig: () => apiRequest('/api/push/config'),
+  savePushSubscription: (subscription) => apiRequest('/api/push/subscriptions', {
+    method: 'PUT',
+    body: JSON.stringify(subscription)
+  }),
+  deletePushSubscription: (endpoint) => apiRequest('/api/push/subscriptions', {
+    method: 'DELETE',
+    body: JSON.stringify({ endpoint })
+  }),
+  sendMessage: (conversationId, text, replyToId = null) => apiRequest(
     `/api/conversations/${conversationId}/messages`,
-    { method: 'POST', body: JSON.stringify({ text }) }
+    { method: 'POST', body: JSON.stringify({ text, replyToId }) }
   )
 };

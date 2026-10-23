@@ -1,0 +1,50 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.secret
+/secrets/
+
+node_modules/
+
+# Local databases and server data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.dump
+*.backup
+/data/
+/uploads/
+/storage/
+/pgdata/
+/postgres-data/
+/.pglite/
+
+# Logs and runtime files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.pid.lock
+
+# Generated output and caches
+coverage/
+.nyc_output/
+dist/
+build/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# Operating system files
+.DS_Store
+Thumbs.db

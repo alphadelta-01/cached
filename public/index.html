@@ -4,7 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0D0D0D">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="cached">
   <title>cached</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -15,7 +20,13 @@
     <section id="auth-welcome" class="auth-welcome">
       <header class="auth-welcome-heading">
         <p class="auth-welcome-message">Welcome to the...</p>
-        <h1 class="auth-welcome-brand">cached</h1>
+        <h1 class="auth-welcome-brand">
+          <svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m16 18 6-6-6-6"/>
+            <path d="m8 6-6 6 6 6"/>
+          </svg>
+          cached
+        </h1>
       </header>
       <div class="auth-welcome-actions">
         <button id="welcome-login" type="button">Log In</button>
@@ -26,7 +37,15 @@
 
     <section id="auth-panel" class="panel auth-panel" hidden>
       <header class="auth-header">
-        <button id="auth-back" class="secondary-button" type="button">Back</button>
+        <button id="auth-back" class="secondary-button icon-close-button" type="button"
+          aria-label="Go back">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+            fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+            stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
         <h2 id="auth-title">Log In</h2>
       </header>
       <form id="auth-form">
@@ -87,14 +106,22 @@
 
     <section id="chat-panel" class="workspace" hidden>
       <header class="workspace-topbar">
-        <h1 class="workspace-brand">cached</h1>
-        <button id="settings-toggle" class="expandable-action settings-toggle" type="button"
-          aria-label="Settings" aria-pressed="false">
-          <span class="action-button-icon" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings preview-icon"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
-          </span>
-          <span class="action-button-label">Settings</span>
-        </button>
+        <h1 class="workspace-brand">
+          <svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m16 18 6-6-6-6"/>
+            <path d="m8 6-6 6 6 6"/>
+          </svg>
+          cached
+        </h1>
+        <div class="settings-actions">
+          <button id="settings-toggle" class="expandable-action settings-toggle" type="button"
+            aria-label="Settings" aria-expanded="false" aria-controls="settings-overlay">
+            <span class="action-button-icon" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings preview-icon"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+            </span>
+            <span class="action-button-label">Settings</span>
+          </button>
+        </div>
       </header>
       <aside id="sidebar" class="sidebar">
         <header class="sidebar-header">
@@ -121,17 +148,42 @@
         </div>
         <section id="conversation-view" class="conversation-view" hidden>
           <header class="conversation-header">
-            <button id="back-button" type="button" class="secondary-button back-button">Back</button>
+            <button id="back-button" type="button" class="secondary-button back-button icon-close-button"
+              aria-label="Close conversation">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+                stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+                <path d="M18 6 6 18"/>
+                <path d="m6 6 12 12"/>
+              </svg>
+            </button>
             <div>
-              <strong id="conversation-name"></strong>
-              <span id="conversation-username" class="muted"></span>
+              <button id="conversation-name" class="conversation-profile-link" type="button"></button>
+              <span id="conversation-presence" class="conversation-presence">
+                <span class="presence-dot" aria-hidden="true"></span>
+                <span id="presence-label" role="status"></span>
+              </span>
             </div>
             <div class="chat-actions">
               <button id="conversation-delete" class="conversation-delete-placeholder" type="button"
-                aria-label="More chat options" aria-expanded="false" aria-controls="chat-actions-menu"></button>
+                aria-label="More chat options" aria-expanded="false" aria-controls="chat-actions-menu">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 5h16"/>
+                  <path d="M4 12h16"/>
+                  <path d="M4 19h16"/>
+                </svg>
+              </button>
               <div id="chat-actions-menu" class="chat-actions-menu" aria-hidden="true">
                 <button id="open-delete-confirmation" class="chat-actions-menu-item" type="button" tabindex="-1">
-                  <span class="chat-actions-menu-icon" aria-hidden="true"></span>
+                  <span class="chat-actions-menu-icon" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M10 11v6"/>
+                      <path d="M14 11v6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                      <path d="M3 6h18"/>
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </span>
                   <span>Delete</span>
                 </button>
               </div>
@@ -139,10 +191,27 @@
           </header>
           <p id="conversation-status" class="status" role="status"></p>
           <ol id="messages" class="messages" aria-live="polite"></ol>
+          <div id="reply-preview" class="reply-preview" hidden>
+            <div class="reply-preview-content">
+              <strong id="reply-preview-sender"></strong>
+              <span id="reply-preview-text"></span>
+            </div>
+            <button id="reply-cancel" class="icon-close-button" type="button"
+              aria-label="Cancel reply">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18"/>
+                <path d="m6 6 12 12"/>
+              </svg>
+            </button>
+          </div>
           <form id="composer" class="composer">
-            <label class="sr-only" for="message-input">Message</label>
-            <input id="message-input" placeholder="Message" autocomplete="off" maxlength="4000">
-            <button id="send-button" type="submit">Send</button>
+            <div class="message-composer-row">
+              <div id="message-input" class="message-editor" role="textbox" aria-label="Message"
+                aria-multiline="true" contenteditable="true" data-placeholder="Message"></div>
+              <button id="send-button" type="submit">Send</button>
+            </div>
           </form>
         </section>
       </section>
@@ -154,41 +223,141 @@
         <header class="settings-header">
           <h1 id="settings-title">Settings</h1>
           <div class="settings-header-actions">
-            <button id="settings-back" type="button" class="secondary-button">Back</button>
+            <button id="settings-back" type="button" class="secondary-button icon-close-button"
+              aria-label="Close settings">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+                stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+                <path d="M18 6 6 18"/>
+                <path d="m6 6 12 12"/>
+              </svg>
+            </button>
           </div>
         </header>
-        <form id="settings-form" class="settings-form">
-          <div class="settings-identity-grid">
-            <div class="settings-field">
-              <label for="display-name">Display name</label>
-              <input id="display-name" maxlength="100" required>
-            </div>
-            <div class="settings-field">
-              <label for="profile-username">Username</label>
-              <input id="profile-username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" required>
-            </div>
-          </div>
-          <span class="muted">3–24 characters: letters, numbers, and _</span>
-          <fieldset class="color-fieldset">
-            <legend>Your message color</legend>
-            <div id="color-palette" class="color-palette" aria-label="Color palette"></div>
-            <label for="custom-color">Custom color</label>
-            <input id="custom-color" type="color" value="#2B2B2B">
-            <label for="color-hex">HEX</label>
-            <input id="color-hex" pattern="#[0-9A-Fa-f]{6}" maxlength="7" value="#2B2B2B" required>
-            <div class="preview-wrap">
-              <span class="muted">Preview</span>
-              <div id="message-preview" class="message-preview">
-                <span>Your message</span>
+        <div class="settings-layout">
+          <form id="settings-form" class="settings-form">
+            <section id="settings-profile-section" class="settings-section">
+              <div class="settings-group">
+                <h2 class="settings-group-title">Profile information</h2>
+                <div class="profile-summary">
+                  <strong id="profile-summary-name"></strong>
+                  <span id="profile-summary-username" class="muted"></span>
+                  <p id="profile-summary-bio" class="profile-summary-bio" hidden></p>
+                </div>
+                <div class="settings-identity-grid">
+                  <div class="settings-field">
+                    <label for="display-name">Display name</label>
+                    <input id="display-name" maxlength="100" required>
+                  </div>
+                  <div class="settings-field">
+                    <label for="profile-username">Username</label>
+                    <input id="profile-username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" required>
+                  </div>
+                </div>
+                <span class="muted">3–24 characters: letters, numbers, and _</span>
+                <div class="settings-field">
+                  <label for="profile-bio">Profile description</label>
+                  <textarea id="profile-bio" rows="3" maxlength="500"
+                    placeholder="Tell people a little about yourself"></textarea>
+                </div>
               </div>
+              <div class="settings-group">
+                <h2 class="settings-group-title">Notifications</h2>
+                <fieldset class="notification-settings" aria-label="Message notifications">
+                  <p id="notification-status" class="status" role="status">
+                    Get new message alerts, including when the app is closed.
+                  </p>
+                  <button id="notification-toggle" type="button" disabled>Enable notifications</button>
+                  <span class="muted notification-help">
+                    On iPhone, install cached to your Home Screen before enabling notifications.
+                  </span>
+                </fieldset>
+              </div>
+              <div class="settings-group">
+                <h2 class="settings-group-title">Privacy</h2>
+                <label class="privacy-setting" for="show-last-seen">
+                  <input id="show-last-seen" type="checkbox">
+                  <span>Show when I was last online</span>
+                </label>
+                <span class="muted">Your online status remains visible while you are online.</span>
+              </div>
+              <div class="settings-group">
+                <h2 class="settings-group-title">Message appearance</h2>
+                <fieldset class="color-fieldset" aria-label="Message color">
+                  <label for="custom-color">Custom color</label>
+                  <input id="custom-color" type="color" value="#2B2B2B">
+                  <label for="color-hex">HEX</label>
+                  <input id="color-hex" pattern="#[0-9A-Fa-f]{6}" maxlength="7" value="#2B2B2B" required>
+                  <div class="preview-wrap">
+                    <span class="muted">Preview</span>
+                    <div id="message-preview" class="message-preview">
+                      <span>Your message</span>
+                    </div>
+                  </div>
+                </fieldset>
+              </div>
+            </section>
+            <section id="settings-time-section" class="settings-section" hidden>
+              <fieldset class="time-fieldset">
+                <legend>Time display</legend>
+                <div class="settings-field settings-field-inline">
+                  <label for="time-precision">Show message time as</label>
+                  <select id="time-precision">
+                    <option value="minute">HH:mm</option>
+                    <option value="second">HH:mm:ss</option>
+                  </select>
+                </div>
+              </fieldset>
+            </section>
+            <div class="settings-form-footer">
+              <p id="settings-status" class="status" role="status"></p>
+              <button id="settings-save" type="submit">Save</button>
             </div>
-          </fieldset>
-          <div class="settings-form-footer">
+          </form>
+          <nav class="settings-nav" aria-label="Settings sections">
+            <button id="settings-profile-tab" class="settings-menu-item" type="button"
+              aria-pressed="true">
+              <span class="settings-menu-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="8" r="5"/>
+                  <path d="M20 21a8 8 0 0 0-16 0"/>
+                </svg>
+              </span>
+              <span>Profile</span>
+            </button>
+            <button id="settings-time-tab" class="settings-menu-item" type="button"
+              aria-pressed="false">
+              <span class="settings-menu-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M12 6v6l4 2"/>
+                </svg>
+              </span>
+              <span>Time</span>
+            </button>
             <button id="logout" class="logout-button" type="button">Log Out</button>
-            <p id="settings-status" class="status" role="status"></p>
-            <button id="settings-save" type="submit">Save</button>
-          </div>
-        </form>
+          </nav>
+        </div>
+      </section>
+    </div>
+
+    <div id="profile-overlay" class="profile-overlay" hidden>
+      <section class="public-profile" role="dialog" aria-modal="true"
+        aria-labelledby="public-profile-name">
+        <button id="profile-close" class="secondary-button profile-close icon-close-button"
+          type="button" aria-label="Close profile">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+            fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+            stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
+        <div class="public-profile-content">
+          <h1 id="public-profile-name"></h1>
+          <p id="public-profile-identity" class="muted"></p>
+          <p id="public-profile-bio" class="public-profile-bio" hidden></p>
+        </div>
       </section>
     </div>
   </main>
@@ -203,6 +372,15 @@
 
   <div id="logout-confirmation" class="confirmation-overlay" hidden>
     <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="logout-title">
+      <button id="logout-dialog-close" class="dialog-close icon-close-button" type="button"
+        aria-label="Close dialog">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+          fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+          stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+          <path d="M18 6 6 18"/>
+          <path d="m6 6 12 12"/>
+        </svg>
+      </button>
       <h2 id="logout-title">Log out?</h2>
       <p>Are you sure you want to log out?</p>
       <p id="logout-status" class="status" role="alert"></p>
@@ -215,6 +393,15 @@
 
   <div id="delete-confirmation" class="confirmation-overlay" hidden>
     <section class="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+      <button id="delete-dialog-close" class="dialog-close icon-close-button" type="button"
+        aria-label="Close dialog">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+          fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+          stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+          <path d="M18 6 6 18"/>
+          <path d="m6 6 12 12"/>
+        </svg>
+      </button>
       <h2 id="delete-title">Delete this chat?</h2>
       <p>Choose who this chat will be deleted for.</p>
       <fieldset class="delete-scope-options">
@@ -232,6 +419,101 @@
       <div class="confirmation-actions">
         <button id="delete-confirm" class="confirmation-delete" type="button">Delete</button>
         <button id="delete-cancel" class="confirmation-no" type="button">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="message-context-menu" class="message-context-menu" role="menu" hidden>
+    <button class="message-context-menu-item message-format-context-item" type="button"
+      role="menuitemcheckbox" aria-checked="false" data-format="**" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 0 8H6z"/><path d="M6 12h9a4 4 0 0 1 0 8H6z"/></svg>
+      <span>Bold</span>
+      <svg class="message-format-check" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#858585" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+    <button class="message-context-menu-item message-format-context-item" type="button"
+      role="menuitemcheckbox" aria-checked="false" data-format="*" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
+      <span>Italic</span>
+      <svg class="message-format-check" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#858585" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+    <button class="message-context-menu-item message-format-context-item" type="button"
+      role="menuitemcheckbox" aria-checked="false" data-format="__" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12"/><path d="M6 20h12"/><path d="M8 4v6a4 4 0 0 0 8 0V4"/></svg>
+      <span>Underline</span>
+      <svg class="message-format-check" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#858585" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+    <button class="message-context-menu-item message-format-context-item" type="button"
+      role="menuitemcheckbox" aria-checked="false" data-format="~~" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16"/><path d="M5 6c0-2 2-3 7-3s7 1 7 3c0 2-3 4-7 6s-7 4-7 6 2 3 7 3 7-1 7-3"/></svg>
+      <span>Strikethrough</span>
+      <svg class="message-format-check" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#858585" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+    </button>
+    <button id="message-menu-reply" class="message-context-menu-item message-action-context-item" type="button" role="menuitem">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-reply preview-icon" aria-hidden="true"><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><path d="m9 17-5-5 5-5"/></svg>
+      <span>Reply</span>
+    </button>
+    <button id="message-menu-forward" class="message-context-menu-item message-action-context-item" type="button" role="menuitem">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-forward preview-icon" aria-hidden="true"><path d="m15 17 5-5-5-5"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+      <span>Forward</span>
+    </button>
+    <button id="message-menu-delete" class="message-context-menu-item message-context-menu-danger message-action-context-item"
+      type="button" role="menuitem">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash preview-icon" aria-hidden="true"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      <span>Delete</span>
+    </button>
+  </div>
+
+  <div id="message-delete-confirmation" class="confirmation-overlay" hidden>
+    <section class="confirmation-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="message-delete-title">
+      <button id="message-delete-close" class="dialog-close icon-close-button" type="button"
+        aria-label="Close dialog">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+          fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+          stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+          <path d="M18 6 6 18"/>
+          <path d="m6 6 12 12"/>
+        </svg>
+      </button>
+      <h2 id="message-delete-title">Delete message?</h2>
+      <fieldset class="delete-scope-options">
+        <legend>Delete message</legend>
+        <label>
+          <input type="radio" name="message-delete-scope" value="self" checked>
+          Delete only for me
+        </label>
+        <label>
+          <input id="message-delete-everyone-option" type="radio"
+            name="message-delete-scope" value="everyone">
+          Delete for both participants
+        </label>
+      </fieldset>
+      <p id="message-delete-status" class="status" role="alert"></p>
+      <div class="confirmation-actions">
+        <button id="message-delete-confirm" class="confirmation-delete" type="button">Delete</button>
+        <button id="message-delete-cancel" class="confirmation-no" type="button">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="message-forward-overlay" class="confirmation-overlay" hidden>
+    <section class="confirmation-dialog message-forward-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="message-forward-title">
+      <button id="message-forward-close" class="dialog-close icon-close-button" type="button"
+        aria-label="Close dialog">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+          fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+          stroke-linejoin="round" class="lucide lucide-x preview-icon" aria-hidden="true">
+          <path d="M18 6 6 18"/>
+          <path d="m6 6 12 12"/>
+        </svg>
+      </button>
+      <h2 id="message-forward-title">Forward message</h2>
+      <p>Choose a chat.</p>
+      <ul id="message-forward-list" class="message-forward-list"></ul>
+      <p id="message-forward-status" class="status" role="alert"></p>
+      <div class="confirmation-actions">
+        <button id="message-forward-cancel" class="confirmation-no" type="button">Cancel</button>
       </div>
     </section>
   </div>
