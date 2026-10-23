@@ -173,7 +173,7 @@ async function initializePushNotifications() {
   try {
     const config = await api.getPushConfig();
     pushPublicKey = config.publicKey;
-    pushRegistration = await navigator.serviceWorker.register('/sw.js');
+    pushRegistration = await navigator.serviceWorker.register('/sw.js?v=3');
     const subscription = await pushRegistration.pushManager.getSubscription();
     if (subscription) {
       await api.savePushSubscription(subscription.toJSON());
